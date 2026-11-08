@@ -37,6 +37,16 @@
 - Arrays are either fixed-address (`^0x3000`) or a global whose length is implied by the index type. No allocator, no bounds checks.
 - One `main` and one global-init sequence per program, emitted in a generated driver module.
 - Symbol mangling is by hand: `<package>.<file>.<symbol>`, emitted quoted (`@"game.demo.main"`).
+- **ANTLR 4 must be invoked with `-package` and `-lib` before the grammar
+  files.** The Gradle `antlr` plugin appends its arguments after the file
+  list, so the plugin cannot set them; the tool is invoked directly.
+- **The Gradle `antlr` plugin runs ANTLR 2 by default.** Declare
+  `antlr("org.antlr:antlr4:4.13.1")` or invoke the tool directly.
+- **The Kotlin plugin compiles Kotlin before Java**, so kotlinc cannot see Java
+  sources in the same source set. The generated parser is compiled by its own
+  `JavaCompile` task; its output goes on the Kotlin compile classpath.
+- The grammar's root rule is `kotlinFile`, so the parse result is
+  `KotlinParser.KotlinFileContext`.
 
 ## Review Focus
 
@@ -58,9 +68,9 @@ Establishes the build, vendors the grammar (including the missing `UnicodeClasse
 - Create: `settings.gradle.kts`
 - Create: `build.gradle.kts`
 - Create: `gradle.properties`
-- Create: `src/main/antlr/Wolin/WolinLexer.g4` (from `/tmp/wolin-old/KotlinLexer.g4`)
-- Create: `src/main/antlr/Wolin/WolinParser.g4` (from `/tmp/wolin-old/KotlinParser.g4`)
-- Create: `src/main/antlr/Wolin/UnicodeClasses.g4`
+- Create: `src/main/antlr/KotlinLexer.g4` (from `/tmp/wolin-old/KotlinLexer.g4`)
+- Create: `src/main/antlr/KotlinParser.g4` (from `/tmp/wolin-old/KotlinParser.g4`)
+- Create: `src/main/antlr/UnicodeClasses.g4` (fetched — see Step 4)
 - Create: `src/main/kotlin/pl/qus/wolin/parser/ParserFacade.kt`
 - Create: `src/main/kotlin/pl/qus/wolin/driver/Diagnostics.kt`
 - Create: `src/test/kotlin/pl/qus/wolin/parser/CorpusParseTest.kt`
@@ -70,11 +80,18 @@ Establishes the build, vendors the grammar (including the missing `UnicodeClasse
 - Consumes: nothing (first task).
 - Produces:
   - `class Diagnostics { fun error(msg: String, line: Int, col: Int); val hasErrors: Boolean; val messages: List<String> }`
-  - `class ParserFacade(private val diag: Diagnostics) { fun parse(source: String, fileName: String): WolinParser.File? }` — returns `null` when `diag.hasErrors` is true. `WolinParser.File` is the generated ANTLR root for `file`.
+  - `class ParserFacade(private val diag: Diagnostics) { fun parse(source: String, fileName: String): KotlinParser.KotlinFileContext? }` — returns `null` when `diag.hasErrors` is true. The grammar's root rule is `kotlinFile`, so the generated context class is `KotlinParser.KotlinFileContext` — **not** `File`.
 
 - [ ] **Step 1: Write the failing corpus parse test**
 
 ```kotlin
+package pl.qus.wolin.parser
+
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
+import pl.qus.wolin.driver.Diagnostics
+import kotlin.test.assertTrue
+
 class CorpusParseTest {
     @ParameterizedTest
     @ValueSource(strings = ["strings", "misc", "objects", "raster_irq"])
@@ -86,6 +103,14 @@ class CorpusParseTest {
     }
 }
 ```
+
+The test file needs a `package` declaration and explicit imports — a test
+class in the default package cannot see `pl.qus.wolin.parser` or
+`pl.qus.wolin.driver`.
+
+The test needs `kotlin("test")` on the test classpath for
+`kotlin.test.assertTrue`, or use `org.junit.jupiter.api.Assertions.assertTrue`
+instead — either works, but the dependency must be declared.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -100,13 +125,22 @@ Expected: FAIL — `ParserFacade` and `Diagnostics` do not exist.
 rootProject.name = "wolin"
 ```
 
-`build.gradle.kts` — the ANTLR plugin generates the lexer/parser from `src/main/antlr/Wolin/*.g4` into package `pl.qus.wolin.parser`:
+`build.gradle.kts` — **this exact form is verified to work**; it was reached by
+building it, not by guessing. Three things force it:
+
+1. The Gradle `antlr` plugin runs **ANTLR 2** by default. The ANTLR 4 tool must
+   be declared: `antlr("org.antlr:antlr4:4.13.1")`.
+2. ANTLR requires `-package` and `-lib` **before** the grammar files on the
+   command line. The plugin appends its arguments *after* the file list, so the
+   tool is invoked directly by a `ProcessBuilder` instead.
+3. The Kotlin plugin compiles Kotlin **before** Java, so kotlinc cannot see
+   Java sources in the same source set. The generated parser is compiled by its
+   own `JavaCompile` task whose output goes on the Kotlin compile classpath.
 
 ```kotlin
 plugins {
     kotlin("jvm") version "2.2.10"
     id("java")
-    antlr
 }
 
 repositories { mavenCentral() }
@@ -114,22 +148,67 @@ repositories { mavenCentral() }
 dependencies {
     implementation("org.antlr:antlr4-runtime:4.13.1")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.junit.jupiter:junit-jupiter-params:5.11.4")
+    testImplementation(kotlin("test"))
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 kotlin { jvmToolchain(21) }
 
-generateGrammarSource {
-    arguments += listOf("-visitor", "-package", "pl.qus.wolin.parser")
-    outputDirectory = file("src/main/generated/antlr/main/pl/qus/wolin/parser")
+val antlrTool: Configuration by configurations.creating
+dependencies { antlrTool("org.antlr:antlr4:4.13.1") }
+
+val antlrSrc = layout.projectDirectory.dir("src/main/antlr")
+val antlrOut = layout.buildDirectory.dir("generated/antlr")
+val antlrClasses = layout.buildDirectory.dir("classes/antlr")
+
+val generateParser by tasks.registering {
+    val tool = antlrTool
+    val srcDir = antlrSrc
+    val outDir = antlrOut
+    inputs.dir(srcDir)
+    outputs.dir(outDir)
+    doLast {
+        val out = outDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        val classpath = tool.resolve().joinToString(File.pathSeparator) { it.absolutePath }
+        val grammars = srcDir.asFile.listFiles { f -> f.name.endsWith(".g4") }!!.sorted()
+        val cmd = listOf("java", "-cp", classpath, "org.antlr.v4.Tool",
+                         "-visitor", "-package", "pl.qus.wolin.parser",
+                         "-lib", srcDir.asFile.absolutePath, "-o", out.absolutePath) +
+                  grammars.map { it.absolutePath }
+        val proc = ProcessBuilder(cmd).inheritIO().start()
+        if (proc.waitFor() != 0) throw GradleException("ANTLR failed")
+    }
 }
 
-sourceSets {
-    main { java.srcDir("src/main/generated/antlr/main") }
+val compileAntlr by tasks.registering(JavaCompile::class) {
+    dependsOn(generateParser)
+    source(antlrOut)
+    classpath = files(configurations["compileClasspath"])
+    destinationDirectory.set(antlrClasses)
+    options.release.set(21)
 }
 
-tasks.test { useJUnitPlatform() }
+tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin") {
+    dependsOn(compileAntlr)
+    libraries.from(antlrClasses)
+}
+
+tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileTestKotlin") {
+    dependsOn(compileAntlr)
+    libraries.from(antlrClasses)
+}
+
+tasks.test {
+    useJUnitPlatform()
+    classpath += files(antlrClasses)
+}
 ```
+
+The `java` command must be on `PATH`. If it is not, use
+`System.getProperty("java.home") + "/bin/java"` in the command list.
 
 `gradle.properties`:
 
@@ -140,21 +219,54 @@ kotlin.code.style=official
 
 - [ ] **Step 4: Copy the grammar and add `UnicodeClasses.g4`**
 
-Copy `KotlinLexer.g4` and `KotlinParser.g4` from `/tmp/wolin-old/` into `src/main/antlr/Wolin/`, rename the grammar names to `WolinLexer` / `WolinParser`, and keep `import UnicodeClasses;` at the top of the lexer.
+Copy `KotlinLexer.g4` and `KotlinParser.g4` from `/tmp/wolin-old/` into
+`src/main/antlr/`. **Keep the grammar names as they are** (`KotlinLexer`,
+`KotlinParser`) — ANTLR requires the grammar name to match the file name, and
+the generated classes are referenced as `KotlinParser.KotlinFileContext` and
+`KotlinLexer` throughout the code.
 
-`src/main/antlr/Wolin/UnicodeClasses.g4` — the fragments the Kotlin grammar needs. This file is missing from `/tmp/wolin-old` (the old build had it at `src/main/antlr/UnicodeClasses.g4`); write it with these fragment rules:
+Keep `import UnicodeClasses;` at the top of the lexer.
 
-```antlr
-fragment Digit        : [0-9] ;
-fragment HexDigit     : [0-9a-fA-F] ;
-fragment OctalDigit   : [0-7] ;
-fragment BinDigit     : [01] ;
-fragment Letter       : [A-Za-z] ;
-fragment EscapedIdentifier : '\\' [ btnfr"'\\] ;
-fragment UnicodeLetter : ~[\u0000-\u007F] ;
+`src/main/antlr/UnicodeClasses.g4` — **this file is missing from
+`/tmp/wolin-old`** (the old build had it at `src/main/antlr/UnicodeClasses.g4`).
+It is not a handful of fragments: the lexer references eight Unicode-category
+rules that only this file defines —
+
+```
+UNICODE_CLASS_ND  UNICODE_CLASS_NL  UNICODE_CLASS_LL  UNICODE_CLASS_LM
+UNICODE_CLASS_LO  UNICODE_CLASS_LT  UNICODE_CLASS_LU
 ```
 
-Each fragment's body must be exactly the character class shown. If the ANTLR run reports an unknown token for a fragment, that fragment is missing from this list — add it.
+— plus the `Digit`, `HexDigit`, `BinDigit`, `Letter` and `EscapedIdentifier`
+fragments. A hand-written stub with only the obvious fragments does **not**
+work: ANTLR reports `can't find or load grammar UnicodeClasses` and then
+`reference to undefined rule: UNICODE_CLASS_ND` and six more.
+
+Fetch the authoritative file instead of writing one:
+
+```bash
+curl -sL -o src/main/antlr/UnicodeClasses.g4 \
+  https://raw.githubusercontent.com/Kotlin/kotlin-spec/release/grammar/src/main/antlr/UnicodeClasses.g4
+```
+
+It is 1648 lines — the full Unicode category tables, taken from
+`http://www.antlr3.org/grammar/1345144569663/AntlrUnicode.txt`. Keep its
+`lexer grammar UnicodeClasses;` declaration as it is.
+
+**Verify it works before going on:** with all three `.g4` files in
+`src/main/antlr/`, ANTLR must generate without errors. A direct invocation
+proves it without Gradle:
+
+```bash
+java -jar /tmp/antlr-4.13.1-complete.jar -visitor -package pl.qus.wolin.parser \
+  -lib src/main/antlr -o /tmp/gen \
+  src/main/antlr/KotlinLexer.g4 src/main/antlr/KotlinParser.g4
+```
+
+Expected: no output, and `/tmp/gen/` holds `KotlinLexer.java`,
+`KotlinParser.java`, `KotlinParserBaseVisitor.java` and the listener files.
+If `antlr-4.13.1-complete.jar` is not at `/tmp/`, download it from
+`https://www.antlr.org/download/antlr-4.13.1-complete.jar`.
 
 - [ ] **Step 5: Write `Diagnostics.kt`**
 
@@ -186,8 +298,8 @@ import org.antlr.v4.runtime.*
 import pl.qus.wolin.driver.Diagnostics
 
 class ParserFacade(private val diag: Diagnostics) {
-    fun parse(source: String, fileName: String): WolinParser.File? {
-        val lexer = WolinLexer(CharStreams.fromString(source, fileName))
+    fun parse(source: String, fileName: String): KotlinParser.KotlinFileContext? {
+        val lexer = KotlinLexer(CharStreams.fromString(source, fileName))
         lexer.removeErrorListeners()
         lexer.addErrorListener(object : BaseErrorListener() {
             override fun syntaxError(
@@ -196,7 +308,7 @@ class ParserFacade(private val diag: Diagnostics) {
             ) { diag.error(msg, line, charPositionInLine) }
         })
 
-        val parser = WolinParser(CommonTokenStream(lexer))
+        val parser = KotlinParser(CommonTokenStream(lexer))
         parser.removeErrorListeners()
         parser.addErrorListener(object : BaseErrorListener() {
             override fun syntaxError(
@@ -205,7 +317,7 @@ class ParserFacade(private val diag: Diagnostics) {
             ) { diag.error(msg, line, charPositionInLine) }
         })
 
-        val tree = parser.file()
+        val tree = parser.kotlinFile()
         return if (diag.hasErrors) null else tree
     }
 }
@@ -244,7 +356,7 @@ Turns the parse tree into a typed AST. This task owns the type rules — context
 - Test: `src/test/kotlin/pl/qus/wolin/sema/ScopeTest.kt`
 
 **Interfaces:**
-- Consumes: `WolinParser.File` (Task 1), `Diagnostics` (Task 1).
+- Consumes: `KotlinParser.KotlinFileContext` (Task 1), `Diagnostics` (Task 1).
 - Produces:
   - `enum class TypeKind { UBYTE, BYTE, UWORD, WORD, BOOL, UNIT, FLOAT, STRING, ARRAY, FUNCTION }`
   - `data class WolinType(val kind: TypeKind, val nullable: Boolean = false, val elementType: WolinType? = null, val indexType: WolinType? = null, val params: List<WolinType> = emptyList(), val retType: WolinType? = null)`
@@ -252,7 +364,7 @@ Turns the parse tree into a typed AST. This task owns the type rules — context
   - `class SemaException(message: String) : Exception(message)`
   - `sealed class Symbol { data class DataSymbol(val type: WolinType, val location: Location?, val init: Expr?) : Symbol(); data class FunSymbol(val decl: FunDecl) : Symbol() }`
   - `class Scope(private val parent: Scope? = null) { fun declare(name: String, symbol: Symbol); fun lookup(name: String): Symbol?; fun lookupLocal(name: String): Symbol?; fun child(): Scope }`
-  - `class AstBuilder { fun build(file: WolinParser.File): Ast.Program }` — walks the parse tree into the typed AST of `Ast.kt`.
+  - `class AstBuilder { fun build(file: KotlinParser.KotlinFileContext): Ast.Program }` — walks the parse tree into the typed AST of `Ast.kt`.
   - `class TypeChecker { fun check(file: Ast.Program): Ast.Program }` — throws `SemaException` on the first error. The returned `Program` carries a `resolved: MutableMap<VarRef, Symbol>` map so tests can assert which declaration each reference bound to.
 
 - [ ] **Step 1: Write the failing type-rule tests**
@@ -1356,7 +1468,7 @@ git commit -m "feat: bit ops, comparisons, control flow, arrays, strings, pointe
 The grammar diff and the diagnostic catalogue. The reused grammar is a full Kotlin grammar, so most unsupported constructs parse and must be rejected by the analyser.
 
 **Files:**
-- Modify: `src/main/antlr/Wolin/WolinLexer.g4`, `src/main/antlr/Wolin/WolinParser.g4`
+- Modify: `src/main/antlr/KotlinLexer.g4`, `src/main/antlr/KotlinParser.g4`
 - Create: `src/main/kotlin/pl/qus/wolin/sema/Unsupported.kt`
 - Test: `src/test/kotlin/pl/qus/wolin/parser/ReturnAtGrammarTest.kt`
 - Test: `src/test/kotlin/pl/qus/wolin/sema/UnsupportedTest.kt`
