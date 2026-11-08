@@ -1163,31 +1163,119 @@ Expected: FAIL — the bit-assignment forms are not emitted yet.
 
 `:=` → OR, `.=` → AND with the complement, `&=` → AND, `|=` → OR. `.=` is `x = x and not v` — the documented intent, **not** the old template's `lda #$ff-val; sta dst` (which replaces the byte instead of masking it).
 
-- [ ] **Step 4: Write and implement the comparison tests**
+- [ ] **Step 4: Write the failing comparison tests**
 
 `ubyte` comparisons are unsigned: `255 > 0` is true. `byte` comparisons are signed: `-1 > 0` is false. Both run on the real 6502 and write a `bool` result to `$0400`.
 
-- [ ] **Step 5: Write and implement the control-flow tests**
+```kotlin
+class ComparisonTest {
+    @Test fun `ubyte comparison is unsigned`() {
+        val bytes = runProgram("""
+            fun main() {
+                var a: ubyte = 255
+                var b: ubyte = 0
+                var r: bool = a > b
+                var out: ubyte^0x400 = 0
+                out = if (r) 1 else 0
+                while (true) {}
+            }
+        """)
+        assertEquals(1, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test fun `byte comparison is signed`() {
+        val bytes = runProgram("""
+            fun main() {
+                var a: byte = -1
+                var b: byte = 0
+                var r: bool = a > b
+                var out: ubyte^0x400 = 0
+                out = if (r) 1 else 0
+                while (true) {}
+            }
+        """)
+        assertEquals(0, bytes[0].toInt() and 0xFF)
+    }
+}
+```
+
+- [ ] **Step 5: Run the comparison tests to verify they fail**
+
+Run: `./gradlew test --tests '*ComparisonTest*'`
+Expected: FAIL — the comparison paths are not emitted, or the `bool` result is wrong.
+
+- [ ] **Step 6: Implement the comparison paths**
+
+`ubyte`/`uword` order comparisons emit `icmp ult` / `icmp ugt`; `byte`/`word` emit `icmp slt` / `icmp sgt`. Equality is `icmp eq` / `icmp ne` for every integer type. The `bool` result is an `i1`; storing it to a `ubyte` widens it with `zext i1` to `i8`.
+
+- [ ] **Step 7: Write the failing control-flow tests**
 
 `if`/`else`, `when` in both forms, `while`, `do..while`, `break`, `continue`. Each writes a counter to `$0400` and the test asserts the exact count.
 
 For `when` with a subject, the subject is compared against each **branch value** — not against the condition expression, which is what the old Wolin's inverted `simpleWhen` flag actually did.
 
-- [ ] **Step 6: Write and implement the array tests**
+- [ ] **Step 8: Run the control-flow tests to verify they fail**
+
+Run: `./gradlew test --tests '*ControlFlowTest*'`
+Expected: FAIL — the control-flow paths are not emitted.
+
+- [ ] **Step 9: Implement the control-flow paths**
+
+`if`/`else` emits a comparison, then `condBranch` to a `then` block, an `else` block and a merge block. `while` emits a `loop` block that branches to a `body` block, which branches back to `loop`. `do..while` branches to the body first, then tests. `break` branches to the loop's break label, `continue` to its continue label.
+
+Every merge point gets a **phi node** for each in-scope variable whose value differs between the predecessors. The emitter must supply one incoming value per predecessor — LLVM rejects the module otherwise.
+
+- [ ] **Step 10: Write the failing array tests**
 
 A `ubyte[ubyte]` array at a fixed address: write element 3, read it back. The index is always promoted to `uword`, so the GEP is `getelementptr i8, ptr @arr, i16 %idx`.
 
 A `ubyte[uword]` array at a fixed address: same, with a 16-bit index.
 
-- [ ] **Step 7: Write and implement the string tests**
+- [ ] **Step 11: Run the array tests to verify they fail**
+
+Run: `./gradlew test --tests '*ArrayTest*'`
+Expected: FAIL — array access is not emitted.
+
+- [ ] **Step 12: Implement array access**
+
+The index is always promoted to `uword`: `zext i8 %i to i16`, then
+`getelementptr i8, ptr @arr, i16 %idx`. For a 16-bit element type the GEP
+element type is `i16` and the index scales by the element size. A store to an
+array element uses the same GEP.
+
+- [ ] **Step 13: Write the failing string tests**
 
 A string literal is NUL-terminated: `var s: string = "hi"` writes `h`, `i`, `0`. The IR is `private unnamed_addr constant [3 x i8] c"hi\00"`. Escapes are decoded: `"\n"` is one byte `0x0A`.
 
-- [ ] **Step 8: Write and implement the function-pointer test**
+- [ ] **Step 14: Run the string tests to verify they fail**
+
+Run: `./gradlew test --tests '*StringTest*'`
+Expected: FAIL — string emission is not implemented.
+
+- [ ] **Step 15: Implement string emission**
+
+A string literal becomes `private unnamed_addr constant [N+1 x i8] c"...\00"`,
+one per distinct literal. The expression is a `getelementptr` to it. Escapes
+`\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'` and `\uXXXX` are decoded into
+bytes; `${...}` is rejected (see Task 9).
+
+- [ ] **Step 16: Write the failing function-pointer test**
 
 Store a function's address in a `uword` and call through it; also store it in a `(ubyte,ubyte)->ubyte` variable and call through that. The typed pointer is a `ptr` and the call is `call i8 %ptr(i8 %a, i8 %b)`; the `uword` path is `ptrtoint` → `inttoptr` → `call`.
 
-- [ ] **Step 9: Write and implement the interrupt test**
+- [ ] **Step 17: Run the function-pointer tests to verify they fail**
+
+Run: `./gradlew test --tests '*FunctionPointerTest*'`
+Expected: FAIL — indirect calls are not emitted.
+
+- [ ] **Step 18: Implement indirect calls**
+
+A function's address is `ptrtoint ptr @f to i16`; storing it into a `uword`
+global is an ordinary 16-bit store. Calling through it is `inttoptr` back to a
+function pointer and an indirect `call`. A `(ubyte,ubyte)->ubyte` variable holds
+a `ptr` directly and the call is `call i8 %ptr(i8 %a, i8 %b)`.
+
+- [ ] **Step 19: Write the failing interrupt test**
 
 ```kotlin
 class InterruptTest {
@@ -1202,16 +1290,59 @@ The handler function is emitted with `attributes #0 = { "interrupt" }`, which ma
 
 Note that `$d020` is an I/O register and does not read back through the binary monitor's CPU memspace. Assert the *handler ran* by having it write to RAM at `$0400` instead, and treat the border change as a manual/screenshot check.
 
-- [ ] **Step 10: Write and implement the ROM-call test**
+- [ ] **Step 20: Run the interrupt test to verify it fails**
+
+Run: `./gradlew test --tests '*InterruptTest*'`
+Expected: FAIL — the interrupt function is not emitted with the `interrupt` attribute.
+
+- [ ] **Step 21: Implement the interrupt form**
+
+The handler function is emitted with `attributes #0 = { "interrupt" }`, which
+makes the backend emit the register-save prologue and `rti`.
+
+**The compiler must not emit its own A/X/Y save/restore.** The backend already
+does it — verified in the generated assembly, which shows `pha`/`tya`/`pha` on
+entry and `tay`/`pla`/`pla` before the `rti`. A manual save/restore on top
+would double the stack traffic and restore a value the backend had already
+restored.
+
+The handler's address reaches the hardware vector through an ordinary 16-bit
+store to `$0314`: the program writes `ptrtoint ptr @handler to i16` there. The
+SDK installs **no** IRQ dispatcher for the C64 target, so `$0314` belongs to
+the program.
+
+- [ ] **Step 22: Write the failing ROM-call test**
 
 `fun chrout^0xffd2(c: ubyte^CPU.A)` calls the KERNAL routine. Assert the character appears in screen RAM — at `$0400` in the *character* map, so the test's own result block must live elsewhere (e.g. `$0408`).
 
-- [ ] **Step 11: Run all the integration tests**
+- [ ] **Step 23: Run the ROM-call test to verify it fails**
+
+Run: `./gradlew test --tests '*RomCallTest*'`
+Expected: FAIL — the fixed-address call is not emitted.
+
+- [ ] **Step 24: Implement the fixed-address call**
+
+A `fun f^0xffd2(c: ubyte^CPU.A)` declaration emits a function whose body is a
+single inline-asm call:
+
+```
+define void @"t.chrout"(i8 %c) {
+entry:
+  call void asm sideeffect "jsr $$ffd2", "a"(i8 %c)
+  ret void
+}
+```
+
+The constraint list follows the **declaration order** of the parameters, and
+the operands follow the same order. The `$$` escape is mandatory — a bare `$`
+crashes the backend.
+
+- [ ] **Step 25: Run all the integration tests**
 
 Run: `./gradlew test --tests '*it.*'`
 Expected: PASS.
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 26: Commit**
 
 ```bash
 git add src/main/kotlin/pl/qus/wolin/ir src/test/kotlin/pl/qus/wolin/it
