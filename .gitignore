@@ -1,0 +1,17 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Superpowers SDD workspaces (git-ignored scratch)
+.superpowers/
+
+# Build output
+*.prg
+*.ll
+*.map
