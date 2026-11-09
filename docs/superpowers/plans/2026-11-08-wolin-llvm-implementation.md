@@ -371,8 +371,14 @@ Turns the parse tree into a typed AST. This task owns the type rules — context
 
 ```kotlin
 class TypeCheckerTest {
+    /** The type of the first global declaration. */
     private fun typeOf(src: String): WolinType =
         typeChecker(src).globals[0].type
+
+    /** The type of the first local declaration inside the first function. */
+    private fun localTypeOf(src: String): WolinType =
+        typeChecker(src).functions[0].body.filterIsInstance<LocalDecl>()
+            .first().type
 
     private fun typeChecker(src: String): Ast.Program =
         TypeChecker().check(AstBuilder().build(ParserFacade(Diagnostics()).parse(src, "t.ktk")!!))
@@ -392,11 +398,11 @@ class TypeCheckerTest {
     }
 
     @Test fun `mixed operand types are rejected`() {
-        assertThrows<SemaException> { typeOf("fun f() { var a: ubyte = 1; var b: uword = 2; var c = a + b }") }
+        assertThrows<SemaException> { typeChecker("fun f() { var a: ubyte = 1; var b: uword = 2; var c = a + b }") }
     }
 
     @Test fun `arithmetic result type is the left operand type`() {
-        assertEquals(Types.ubyte, typeOf("fun f() { var a: ubyte = 1; var b: ubyte = 2; var c = a + b }"))
+        assertEquals(Types.ubyte, localTypeOf("fun f() { var a: ubyte = 1; var b: ubyte = 2; var c = a + b }"))
     }
 
     @Test fun `negative literal is a byte`() {
@@ -425,13 +431,20 @@ Expected: FAIL — `Types`, `TypeChecker`, `AstBuilder` do not exist.
 ```kotlin
 package pl.qus.wolin.ast
 
+import pl.qus.wolin.sema.Symbol
 import pl.qus.wolin.sema.WolinType
 
 sealed interface Ast
 sealed interface Expr : Ast { val type: WolinType }
 sealed interface Stmt : Ast
 
-data class Program(val globals: List<GlobalDecl>, val functions: List<FunDecl>, val imports: List<ImportDecl>) : Ast
+data class Program(
+    val globals: List<GlobalDecl>,
+    val functions: List<FunDecl>,
+    val imports: List<ImportDecl>,
+    /** Which declaration each variable reference bound to. Filled by the checker. */
+    val resolved: MutableMap<VarRef, Symbol> = mutableMapOf()
+) : Ast
 data class ImportDecl(val path: String, val alias: String?) : Ast
 data class GlobalDecl(val name: String, val type: WolinType, val init: Expr?, val location: Location?) : Ast
 data class FunDecl(val name: String, val params: List<Param>, val retType: WolinType?, val body: List<Stmt>, val isInterrupt: Boolean, val fixedAddress: Int?, val returnAt: List<ReturnAt>) : Ast
@@ -456,6 +469,22 @@ data class Assign(val target: Expr, val value: Expr, override val type: WolinTyp
 data class FunctionLit(val params: List<String>, val body: List<Stmt>, override val type: WolinType) : Expr
 ```
 
+**The AST also needs the statement types the checker walks.** The brief's
+`Ast.kt` block above lists only the expression types; add these statements:
+
+```kotlin
+data class LocalDecl(val name: String, val type: WolinType, val init: Expr?, val isVal: Boolean) : Stmt
+data class ExprStmt(val expr: Expr) : Stmt
+data class IfStmt(val cond: Expr, val then: List<Stmt>, val otherwise: List<Stmt>) : Stmt
+data class WhileStmt(val cond: Expr, val body: List<Stmt>, val isDoWhile: Boolean) : Stmt
+data class BreakStmt(val label: String?) : Stmt
+data class ContinueStmt(val label: String?) : Stmt
+data class ReturnStmt(val value: Expr?) : Stmt
+```
+
+`LocalDecl.type` is the *declared* type, or the *inferred* type when the
+declaration has no explicit type annotation. The checker fills it in.
+
 - [ ] **Step 5: Write `Scope.kt`**
 
 `src/main/kotlin/pl/qus/wolin/sema/Scope.kt` implements a scope stack with shadowing:
@@ -477,6 +506,44 @@ class Scope(private val parent: Scope? = null) {
 `Symbol` is a sealed class: `DataSymbol(val type: WolinType, val location: Location?, val init: Expr?)` and `FunSymbol(val decl: FunDecl)`.
 
 - [ ] **Step 6: Write `AstBuilder.kt` and `TypeChecker.kt`**
+
+**The parse-tree context classes you will walk** (read from the generated
+`KotlinParser.java` — do not guess these names):
+
+| Construct | Context class |
+|---|---|
+| whole file | `KotlinParser.KotlinFileContext` |
+| a top-level property (`var x: ubyte = 5`) | `PropertyDeclarationContext` |
+| a local variable (`var x = 5` inside a block) | `VariableDeclarationContext` |
+| a function | `FunctionDeclarationContext` |
+| a type annotation | `TypeReferenceContext` |
+| a literal of any kind | `LiteralConstantContext` |
+| a string literal | `StringLiteralContext` |
+| an identifier | `SimpleIdentifierContext` |
+| an `if` | `IfExpressionContext` |
+| `while` / `do..while` | `WhileExpressionContext` / `DoWhileExpressionContext` |
+| a function literal | `FunctionLiteralContext` |
+| an array type suffix | `ArrayDeclarationContext` |
+
+The literal kinds are reachable through `LiteralConstantContext`'s accessors:
+`IntegerLiteral()`, `HexLiteral()`, `BinLiteral()`, `RealLiteral()`,
+`BooleanLiteral()`, `CharacterLiteral()`, `stringLiteral()`, `LongLiteral()`,
+`NullLiteral()`.
+
+**How the `^location` suffix parses.** The grammar rule is
+`typeReference: ... | userType (arrayDeclaration)? (NL* CARON locationReference)?`
+and `locationReference: literalConstant | userType`. So:
+
+- `var x: ubyte^0xd020` — the location is a **literalConstant** → a
+  `FixedAddress`.
+- `var x: bool^CPU.I` — the location is a **userType** whose qualified name
+  starts with `CPU.` → a `CpuRegister`.
+- `var arr: ubyte[ubyte]^0x3000` — a userType plus an `arrayDeclaration`, then
+  the location.
+
+The `CPU` prefix is what distinguishes a register from an ordinary qualified
+type name. `CPU` is a reserved namespace in v1: a user type named `CPU` is a
+compile error.
 
 `src/main/kotlin/pl/qus/wolin/sema/AstBuilder.kt` walks the parse tree into the AST of `Ast.kt`. It resolves declarations, expressions and statements, and leaves every type slot unset — the `TypeChecker` fills them in.
 
