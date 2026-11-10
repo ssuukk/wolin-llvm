@@ -306,10 +306,7 @@ class TypeChecker {
                 resolved[target] = symbol
                 target.type = data.type
 
-                val valueType = checkExpr(expr.value, data.type)
-                if (valueType.kind != data.type.kind) {
-                    throw SemaException("Attempt reassign ${data.type} $valueType")
-                }
+                checkAssignedValue(expr, data.type)
                 expr.type = data.type
             }
 
@@ -324,16 +321,62 @@ class TypeChecker {
                 }
                 target.type = arrayType.elementType ?: Types.unit
 
-                val valueType = checkExpr(expr.value, target.type)
-                if (valueType.kind != target.type.kind) {
-                    throw SemaException("Attempt reassign ${target.type} $valueType")
-                }
+                checkAssignedValue(expr, target.type)
                 expr.type = target.type
             }
 
             else -> throw SemaException("Invalid assignment target")
         }
         return expr.type
+    }
+
+    /**
+     * Checks the value of an assignment against the target's type, according to
+     * the assignment operator:
+     *
+     * - `=` — the value's type must equal the target's type.
+     * - `+=`, `-=`, `*=`, `/=`, `%=` — read-modify-write: the arithmetic rule
+     *   applies, so the value has the target's type. An integer literal takes
+     *   the target's type contextually; any other value of a different type is
+     *   an error, because there is no promotion.
+     * - `:=`, `.=`, `&=`, `|=` — a bit mask: the value is an integer, but it
+     *   need not have the target's type; it only has to fit the target's width.
+     */
+    private fun checkAssignedValue(expr: Assign, targetType: WolinType) {
+        when (expr.op) {
+            "=" -> {
+                val valueType = checkExpr(expr.value, targetType)
+                if (valueType.kind != targetType.kind) {
+                    throw SemaException("Attempt reassign $targetType $valueType")
+                }
+            }
+
+            "+=", "-=", "*=", "/=", "%=" -> {
+                if (!targetType.isInteger) {
+                    throw SemaException("Operator ${expr.op} is not defined for $targetType")
+                }
+                val valueType = checkExpr(expr.value, targetType)
+                if (valueType.kind != targetType.kind) {
+                    throw SemaException("Attempt reassign $targetType $valueType")
+                }
+            }
+
+            ":=", ".=", "&=", "|=" -> {
+                if (!targetType.isInteger) {
+                    throw SemaException("Operator ${expr.op} is not defined for $targetType")
+                }
+                val valueType = checkExpr(expr.value, null)
+                if (!valueType.isInteger) {
+                    throw SemaException("Operator ${expr.op} is not defined for $valueType")
+                }
+                val literal = expr.value as? IntLit
+                if (literal != null && !fitsWidth(literal.value, targetType)) {
+                    throw SemaException("Value out of range")
+                }
+            }
+
+            else -> throw SemaException("Unknown assignment operator ${expr.op}")
+        }
     }
 
     private fun checkCall(expr: Call): WolinType {
@@ -440,6 +483,19 @@ class TypeChecker {
         TypeKind.BYTE -> value in -127..127
         TypeKind.UWORD -> value in 0..65535
         TypeKind.WORD -> value in -32768..32767
+        else -> false
+    }
+
+    /**
+     * Whether `value` fits into the *width* of `type`. A bit mask is a bit
+     * pattern, so `0xFF` fits an `ubyte` even though it does not fit a
+     * `byte`.
+     */
+    private fun fitsWidth(value: Long, type: WolinType): Boolean = when (type.kind) {
+        TypeKind.UBYTE -> value in 0..255
+        TypeKind.BYTE -> value in -128..255
+        TypeKind.UWORD -> value in 0..65535
+        TypeKind.WORD -> value in -32768..65535
         else -> false
     }
 

@@ -115,4 +115,50 @@ class TypeCheckerTest {
     @Test fun `an initialiser of a different type is rejected`() {
         assertThrows<SemaException> { typeChecker("var g: ubyte = 0; var x: uword = g") }
     }
+
+    @Test fun `a bit assignment with a mask of a different type is accepted`() {
+        // The mask is not a value of the target's type; it only has to be an
+        // integer, so it must not be rejected for a type mismatch.
+        typeChecker("fun f() { var x: ubyte = 0; x := 0xFF }")
+        typeChecker("fun f() { var x: ubyte = 0; x .= 0xFF }")
+        typeChecker("fun f() { var x: ubyte = 0; x &= 0xFF }")
+        typeChecker("fun f() { var x: ubyte = 0; x |= 1 }")
+        typeChecker("var m: uword = 15; fun f() { var x: ubyte = 0; x := m }")
+        typeChecker("var m: byte = 1; fun f() { var x: ubyte = 0; x &= m }")
+    }
+
+    @Test fun `a bit assignment with a non-integer mask is rejected`() {
+        assertThrows<SemaException> { typeChecker("fun f() { var x: ubyte = 0; x := true }") }
+        assertThrows<SemaException> { typeChecker("fun f() { var x: ubyte = 0; x &= true }") }
+    }
+
+    @Test fun `a bit assignment mask must fit the target's width`() {
+        assertThrows<SemaException> { typeChecker("fun f() { var x: ubyte = 0; x := 100000 }") }
+        assertThrows<SemaException> { typeChecker("fun f() { var x: ubyte = 0; x := 0xFFFF }") }
+    }
+
+    @Test fun `a mask fits the width of a signed target`() {
+        typeChecker("fun f() { var x: byte = 0; x := 0xFF }")
+        typeChecker("fun f() { var x: word = 0; x := 0xFFFF }")
+    }
+
+    @Test fun `an arithmetic compound assignment with a literal is accepted`() {
+        typeChecker("fun f() { var x: ubyte = 1; x += 1 }")
+        typeChecker("fun f() { var x: ubyte = 1; x -= 1 }")
+        typeChecker("fun f() { var x: ubyte = 1; x *= 2 }")
+        typeChecker("fun f() { var x: ubyte = 1; x /= 2 }")
+        typeChecker("fun f() { var x: ubyte = 1; x %= 2 }")
+    }
+
+    @Test fun `an arithmetic compound assignment does not promote`() {
+        assertThrows<SemaException> {
+            typeChecker("var b: uword = 2; fun f() { var x: ubyte = 1; x += b }")
+        }
+    }
+
+    @Test fun `a plain assignment still requires the same type`() {
+        assertThrows<SemaException> {
+            typeChecker("var b: uword = 2; fun f() { var x: ubyte = 1; x = b }")
+        }
+    }
 }
