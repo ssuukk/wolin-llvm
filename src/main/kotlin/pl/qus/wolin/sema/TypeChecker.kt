@@ -352,10 +352,12 @@ class TypeChecker {
             }
 
             "+=", "-=", "*=", "/=", "%=" -> {
-                if (!targetType.isInteger) {
-                    throw SemaException("Operator ${expr.op} is not defined for $targetType")
-                }
-                val valueType = checkExpr(expr.value, targetType)
+                requireNumeric(targetType, expr.op)
+                // An integer literal takes an *integer* target's type
+                // contextually. A float target does not take an integer
+                // literal — that would be a promotion, and there is none.
+                val expected = if (targetType.isInteger) targetType else null
+                val valueType = checkExpr(expr.value, expected)
                 if (valueType.kind != targetType.kind) {
                     throw SemaException("Attempt reassign $targetType $valueType")
                 }
@@ -369,8 +371,8 @@ class TypeChecker {
                 if (!valueType.isInteger) {
                     throw SemaException("Operator ${expr.op} is not defined for $valueType")
                 }
-                val literal = expr.value as? IntLit
-                if (literal != null && !fitsWidth(literal.value, targetType)) {
+                val literal = maskLiteral(expr.value)
+                if (literal != null && !fitsWidth(literal, targetType)) {
                     throw SemaException("Value out of range")
                 }
             }
@@ -497,6 +499,20 @@ class TypeChecker {
         TypeKind.UWORD -> value in 0..65535
         TypeKind.WORD -> value in -32768..65535
         else -> false
+    }
+
+    /**
+     * The literal value of a bit mask, or null when the mask is not a literal.
+     *
+     * A negated literal is a `UnaryOp`, not an `IntLit`, so the width check
+     * has to see through the negation. The value to check is the literal's own
+     * value, not its negation: `-1` is the bit pattern `0xFF`, whose magnitude
+     * `1` fits an `ubyte`.
+     */
+    private fun maskLiteral(value: Expr): Long? = when (value) {
+        is IntLit -> value.value
+        is UnaryOp -> if (value.op == "-") (value.operand as? IntLit)?.value else null
+        else -> null
     }
 
     private fun requireBool(type: WolinType, what: String) {

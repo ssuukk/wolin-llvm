@@ -161,4 +161,33 @@ class TypeCheckerTest {
             typeChecker("var b: uword = 2; fun f() { var x: ubyte = 1; x = b }")
         }
     }
+
+    @Test fun `an arithmetic compound assignment on a float target is accepted`() {
+        typeChecker("fun f() { var x: float = 1.5; x += 1.5 }")
+        typeChecker("fun f() { var x: float = 1.5; x -= 2.5 }")
+        typeChecker("fun f() { var x: float = 1.5; x *= 2.0 }")
+        typeChecker("fun f() { var x: float = 1.5; x /= 2.0 }")
+    }
+
+    @Test fun `an arithmetic compound assignment on a float target does not promote`() {
+        assertThrows<SemaException> { typeChecker("fun f() { var x: float = 1.5; x += 1 }") }
+    }
+
+    @Test fun `a negated mask is accepted when it fits the target's width`() {
+        // -1 is the bit pattern 0xFF, which fits an ubyte.
+        typeChecker("fun f() { var x: ubyte = 0; x := -1 }")
+        typeChecker("fun f() { var x: ubyte = 0; x := -128 }")
+    }
+
+    @Test fun `a negated mask that does not fit the target's width is rejected`() {
+        assertThrows<SemaException> { typeChecker("fun f() { var x: ubyte = 0; x := -256 }") }
+    }
+
+    @Test fun `a negated mask does not narrow the target`() {
+        // The mask form never changes the target's type: -1 is a bit pattern,
+        // not a value of -1.
+        val program = typeChecker("fun f() { var x: ubyte = 0; x := -1 }")
+        val x = program.functions[0].body.filterIsInstance<Ast.LocalDecl>().first()
+        assertEquals(Types.ubyte, x.type)
+    }
 }
