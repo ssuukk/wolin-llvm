@@ -366,6 +366,11 @@ Turns the parse tree into a typed AST. This task owns the type rules — context
   - `class Scope(private val parent: Scope? = null) { fun declare(name: String, symbol: Symbol); fun lookup(name: String): Symbol?; fun lookupLocal(name: String): Symbol?; fun child(): Scope }`
   - `class AstBuilder { fun build(file: KotlinParser.KotlinFileContext): Ast.Program }` — walks the parse tree into the typed AST of `Ast.kt`.
   - `class TypeChecker { fun check(file: Ast.Program): Ast.Program }` — throws `SemaException` on the first error. The returned `Program` carries a `resolved: MutableMap<VarRef, Symbol>` map so tests can assert which declaration each reference bound to.
+    - **`resolved` must be an `IdentityHashMap`.** Two `VarRef`s to the same
+      name and the same type are equal under the data-class `equals`, so a
+      plain `HashMap` would merge them — and the scope test could no longer
+      tell the shadowed inner declaration from the outer one. Identity
+      comparison keeps them apart.
 
 - [ ] **Step 1: Write the failing type-rule tests**
 
@@ -434,56 +439,139 @@ package pl.qus.wolin.ast
 import pl.qus.wolin.sema.Symbol
 import pl.qus.wolin.sema.WolinType
 
-sealed interface Ast
-sealed interface Expr : Ast { val type: WolinType }
-sealed interface Stmt : Ast
+/**
+ * The typed AST.
+ *
+ * Every node is nested under [Ast] so that it is reachable as `Ast.Program`,
+ * `Ast.LocalDecl` and so on; the top-level type aliases below are the same
+ * types under their plain names.
+ */
+sealed interface Ast {
+    sealed interface Expr : Ast { val type: WolinType }
+    sealed interface Stmt : Ast
 
-data class Program(
-    val globals: List<GlobalDecl>,
-    val functions: List<FunDecl>,
-    val imports: List<ImportDecl>,
-    /** Which declaration each variable reference bound to. Filled by the checker. */
-    val resolved: MutableMap<VarRef, Symbol> = mutableMapOf()
-) : Ast
-data class ImportDecl(val path: String, val alias: String?) : Ast
-data class GlobalDecl(val name: String, val type: WolinType, val init: Expr?, val location: Location?) : Ast
-data class FunDecl(val name: String, val params: List<Param>, val retType: WolinType?, val body: List<Stmt>, val isInterrupt: Boolean, val fixedAddress: Int?, val returnAt: List<ReturnAt>) : Ast
-data class Param(val name: String, val type: WolinType, val location: Location?) : Ast
-data class ReturnAt(val address: Int) : Ast
+    data class Program(
+        val globals: List<GlobalDecl>,
+        val functions: List<FunDecl>,
+        val imports: List<ImportDecl>,
+        /** Which declaration each variable reference bound to. Filled by the checker. */
+        val resolved: MutableMap<VarRef, Symbol> = mutableMapOf()
+    ) : Ast
 
-sealed class Location : Ast
-data class FixedAddress(val address: Int) : Location()
-data class CpuRegister(val name: String) : Location()      // "CPU.A", "CPU.X", "CPU.Y", "CPU.C", "CPU.I", "CPU.N", "CPU.Z", "CPU.AX", "CPU.XY"
-data class FixedArray(val address: Int) : Location()
+    data class ImportDecl(val path: String, val alias: String?) : Ast
 
-data class IntLit(val value: Long, override val type: WolinType) : Expr
-data class RealLit(val value: Double, override val type: WolinType) : Expr
-data class BoolLit(val value: Boolean, override val type: WolinType) : Expr
-data class CharLit(val value: Int, override val type: WolinType) : Expr
-data class StringLit(val bytes: ByteArray, override val type: WolinType) : Expr
-data class VarRef(val name: String, override val type: WolinType) : Expr
-data class UnaryOp(val op: String, val operand: Expr, override val type: WolinType) : Expr
-data class BinaryOp(val op: String, val left: Expr, val right: Expr, override val type: WolinType) : Expr
-data class Call(val callee: Expr, val args: List<Expr>, override val type: WolinType) : Expr
-data class Assign(val target: Expr, val value: Expr, override val type: WolinType) : Expr
-data class FunctionLit(val params: List<String>, val body: List<Stmt>, override val type: WolinType) : Expr
+    /**
+     * A file-scope variable. `type` is the declared type, or the inferred one
+     * when the declaration has no type annotation; `declaredType` tells the two
+     * apart.
+     */
+    data class GlobalDecl(
+        val name: String,
+        var type: WolinType,
+        val init: Expr?,
+        val location: Location?,
+        /** `val` declarations cannot be assigned to. */
+        val isVal: Boolean = false,
+        /** The type as written in the source, or null when there was none. */
+        val declaredType: WolinType? = null
+    ) : Ast
+
+    data class FunDecl(
+        val name: String,
+        val params: List<Param>,
+        val retType: WolinType?,
+        val body: List<Stmt>,
+        val isInterrupt: Boolean,
+        val fixedAddress: Int?,
+        val returnAt: List<ReturnAt>
+    ) : Ast
+
+    data class Param(val name: String, val type: WolinType, val location: Location?) : Ast
+    data class ReturnAt(val address: Int) : Ast
+
+    sealed class Location : Ast
+    data class FixedAddress(val address: Int) : Location()
+    data class CpuRegister(val name: String) : Location()      // "CPU.A", "CPU.X", "CPU.Y", "CPU.C", "CPU.I", "CPU.N", "CPU.Z", "CPU.AX", "CPU.XY"
+    data class FixedArray(val address: Int) : Location()
+
+    data class IntLit(val value: Long, override val type: WolinType) : Expr
+    data class RealLit(val value: Double, override val type: WolinType) : Expr
+    data class BoolLit(val value: Boolean, override val type: WolinType) : Expr
+    data class CharLit(val value: Int, override val type: WolinType) : Expr
+    data class StringLit(val bytes: ByteArray, override val type: WolinType) : Expr
+    data class NullLit(override val type: WolinType) : Expr
+    data class VarRef(val name: String, override val type: WolinType) : Expr
+    data class UnaryOp(val op: String, val operand: Expr, override val type: WolinType) : Expr
+    data class BinaryOp(val op: String, val left: Expr, val right: Expr, override val type: WolinType) : Expr
+    data class Call(val callee: Expr, val args: List<Expr>, override val type: WolinType) : Expr
+    data class Assign(val target: Expr, val value: Expr, val op: String = "=", override val type: WolinType) : Expr
+    data class IfExpr(val cond: Expr, val then: Expr?, val otherwise: Expr?, override val type: WolinType) : Expr
+    data class ArrayAccess(val array: Expr, val index: Expr, override val type: WolinType) : Expr
+    data class FunctionLit(val params: List<String>, val body: List<Stmt>, override val type: WolinType) : Expr
+
+    data class LocalDecl(
+        val name: String,
+        var type: WolinType,
+        val init: Expr?,
+        val isVal: Boolean = false,
+        val declaredType: WolinType? = null,
+        val location: Location? = null
+    ) : Stmt
+
+    data class BlockStmt(val statements: List<Stmt>) : Stmt
+    data class ExprStmt(val expr: Expr) : Stmt
+    data class IfStmt(val cond: Expr, val then: List<Stmt>, val otherwise: List<Stmt>) : Stmt
+    data class WhileStmt(val cond: Expr, val body: List<Stmt>, val isDoWhile: Boolean) : Stmt
+    data class BreakStmt(val label: String?) : Stmt
+    data class ContinueStmt(val label: String?) : Stmt
+    data class ReturnStmt(val value: Expr?) : Stmt
+}
+
+/* The same types under their plain names. */
+typealias Program = Ast.Program
+typealias ImportDecl = Ast.ImportDecl
+typealias GlobalDecl = Ast.GlobalDecl
+typealias FunDecl = Ast.FunDecl
+typealias Param = Ast.Param
+typealias ReturnAt = Ast.ReturnAt
+typealias Location = Ast.Location
+typealias FixedAddress = Ast.FixedAddress
+typealias CpuRegister = Ast.CpuRegister
+typealias FixedArray = Ast.FixedArray
+typealias Expr = Ast.Expr
+typealias Stmt = Ast.Stmt
+typealias IntLit = Ast.IntLit
+typealias RealLit = Ast.RealLit
+typealias BoolLit = Ast.BoolLit
+typealias CharLit = Ast.CharLit
+typealias StringLit = Ast.StringLit
+typealias NullLit = Ast.NullLit
+typealias VarRef = Ast.VarRef
+typealias UnaryOp = Ast.UnaryOp
+typealias BinaryOp = Ast.BinaryOp
+typealias Call = Ast.Call
+typealias Assign = Ast.Assign
+typealias IfExpr = Ast.IfExpr
+typealias ArrayAccess = Ast.ArrayAccess
+typealias FunctionLit = Ast.FunctionLit
+typealias LocalDecl = Ast.LocalDecl
+typealias BlockStmt = Ast.BlockStmt
+typealias ExprStmt = Ast.ExprStmt
+typealias IfStmt = Ast.IfStmt
+typealias WhileStmt = Ast.WhileStmt
+typealias BreakStmt = Ast.BreakStmt
+typealias ContinueStmt = Ast.ContinueStmt
+typealias ReturnStmt = Ast.ReturnStmt
 ```
 
-**The AST also needs the statement types the checker walks.** The brief's
-`Ast.kt` block above lists only the expression types; add these statements:
-
-```kotlin
-data class LocalDecl(val name: String, val type: WolinType, val init: Expr?, val isVal: Boolean) : Stmt
-data class ExprStmt(val expr: Expr) : Stmt
-data class IfStmt(val cond: Expr, val then: List<Stmt>, val otherwise: List<Stmt>) : Stmt
-data class WhileStmt(val cond: Expr, val body: List<Stmt>, val isDoWhile: Boolean) : Stmt
-data class BreakStmt(val label: String?) : Stmt
-data class ContinueStmt(val label: String?) : Stmt
-data class ReturnStmt(val value: Expr?) : Stmt
-```
+The nodes are nested under `sealed interface Ast` so that both `Ast.Program`
+and `Program` spell the same type — the brief's Step-1 test uses the nested
+form, and the code below uses the plain form.
 
 `LocalDecl.type` is the *declared* type, or the *inferred* type when the
-declaration has no explicit type annotation. The checker fills it in.
+declaration has no explicit type annotation; `declaredType` tells the two
+apart. `isVal` records `val` versus `var`, which is what makes `val`
+immutability checkable.
 
 - [ ] **Step 5: Write `Scope.kt`**
 
@@ -601,7 +689,10 @@ The core abstraction: SSA value naming, basic blocks, terminators, and phi place
 - Produces:
   - `sealed interface IrType { object I8; object I16; object I32; object I1; object Float; object Void; object Ptr; data class Array(val of: IrType, val count: Int) }`
   - `data class IrValue(val name: String, val type: IrType)` — `name` is the full SSA name including `%`.
-  - `class IrBuilder { fun startFunction(name: String, retType: IrType); fun endFunction(); fun addBlock(name: String); fun block(): String; fun value(type: IrType): IrValue; fun alloca(type: IrType): IrValue; fun instr(type: IrType, text: String, operands: List<IrValue> = emptyList()): IrValue; fun phi(type: IrType, incoming: List<Pair<IrValue, String>>): IrValue; fun branch(target: String); fun condBranch(cond: IrValue, ifTrue: String, ifFalse: String); fun ret(value: IrValue?); fun callVoid(target: String, args: List<IrValue>, fnType: IrType? = null); fun call(retType: IrType, target: String, args: List<IrValue>): IrValue; fun render(): String }`
+  - `class IrBuilder { fun startFunction(name: String, retType: IrType, params: List<IrValue> = emptyList()); fun endFunction(); fun addBlock(name: String); fun block(): String; fun value(type: IrType): IrValue; fun alloca(type: IrType): IrValue; fun instr(type: IrType, text: String, operands: List<IrValue> = emptyList()): IrValue; fun phi(type: IrType, incoming: List<Pair<IrValue, String>>): IrValue; fun branch(target: String); fun condBranch(cond: IrValue, ifTrue: String, ifFalse: String); fun ret(value: IrValue?); fun callVoid(target: String, args: List<IrValue>, fnType: IrType? = null); fun call(retType: IrType, target: String, args: List<IrValue>): IrValue; fun render(): String }`
+    - `startFunction` takes the function's parameters so `render()` can emit
+      `define <ret> @<name>(<params>)`. The parameters are **not** allocated SSA
+      names — they keep the names they are given (e.g. `%a`).
 
 - [ ] **Step 1: Write the failing builder tests**
 
@@ -619,7 +710,6 @@ class IrBuilderTest {
     @Test fun `every block gets a terminator`() {
         val b = IrBuilder()
         b.startFunction("f", IrType.I32)
-        b.addBlock("entry")
         b.ret(IrValue("%v0", IrType.I32))
         b.endFunction()
         val ir = b.render()
@@ -627,15 +717,31 @@ class IrBuilderTest {
         assertTrue(ir.contains("ret i32 %v0"))
     }
 
+    @Test fun `a block without a terminator is rejected`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I32)
+        b.addBlock("bb1")
+        b.endFunction()
+        assertThrows<IllegalStateException> { b.render() }
+    }
+
     @Test fun `phi takes one incoming per predecessor`() {
         val b = IrBuilder()
         b.startFunction("f", IrType.I32)
-        b.addBlock("entry"); b.branch("merge")
+        b.branch("merge")
         b.addBlock("merge")
         b.phi(IrType.I32, listOf(IrValue("%v0", IrType.I32) to "entry", IrValue("%v1", IrType.I32) to "else"))
         b.ret(IrValue("%v2", IrType.I32))
         b.endFunction()
         assertTrue(b.render().contains("phi i32 [ %v0, %entry ], [ %v1, %else ]"))
+    }
+
+    @Test fun `function parameters are rendered`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I32, listOf(IrValue("%a", IrType.I8), IrValue("%b", IrType.I16)))
+        b.ret(IrValue("%v0", IrType.I32))
+        b.endFunction()
+        assertTrue(b.render().contains("define i32 @f(i8 %a, i16 %b)"))
     }
 }
 ```
@@ -661,6 +767,9 @@ Rules the implementation must follow:
 - Block labels are `entry`, `bb1`, `bb2`, … within a function.
 - `instr` appends `"  <text>"` to the current block and returns a fresh `IrValue` whose `name` is the next `%vN`.
 - `render()` emits, per function: `define <ret> @<name>(<params>) {`, then the blocks, then `}`. Every block must have a terminator; `render()` throws `IllegalStateException("block %s has no terminator")` if one is missing.
+- `startFunction` opens an `entry` block automatically, so a caller that
+  immediately emits a `ret` does not have to call `addBlock("entry")` first.
+  `addBlock` after that creates the next block (`bb1`, `bb2`, …).
 - `phi` emits `phi <type> [ %v, %label ], ...` — one entry per incoming, in the given order.
 - `branch` emits `br label %<target>`; `condBranch` emits `br i1 %<cond>, label %<ifTrue>, label %<ifFalse>`; `ret` emits `ret <type> <value>` or `ret void`.
 - `callVoid`/`call` emit `call <ret> @<target>(<args>)` — `call void @f(i8 %a)` for void, `call i32 @f(i8 %a)` otherwise.
@@ -893,7 +1002,7 @@ Emits the register accessors, the ROM-call mechanism and the interrupt form. Eve
 - Consumes: `IrBuilder` (Task 3), `ExprEmitter` (Task 4).
 - Produces:
   - `object CpuAccessors` with:
-    - `fun readA(b: IrBuilder): IrValue` — emits `ldy #0` + `sta ($0),y` into a scratch slot, then loads from it. **Touches no flag.**
+    - `fun readA(b: IrBuilder): IrValue` — creates its scratch slot via `b.alloca(IrType.I8)`, emits `ldy #0` + `sta ($0),y` with the slot as the `"r"` pointer operand, then loads from the slot. **Touches no flag.** The accessor assumes the current block is the function's `entry` block (the slot is an `alloca`).
     - `fun readAValue(b: IrBuilder): IrValue` — emits `pha\npla` with constraint `"=a,a"`. Clobbers N and Z.
     - `fun readFlag(b: IrBuilder, mask: Int): IrValue` — emits the status-preserving sequence with constraint `"=x,x"`.
     - `fun writeRegister(b: IrBuilder, reg: String, value: IrValue)` — emits an empty `asm sideeffect ""` with an input constraint `"a"`/`"x"`/`"y"`.
@@ -946,7 +1055,7 @@ class ExternalCallTest {
         ExternalCalls().emitCall(b, 0xffba, listOf(
             IrValue("%a", IrType.I8) to "CPU.A",
             IrValue("%y", IrType.I8) to "CPU.Y",
-            IrValue("%x", IrType.I8) to "CPU.X"))
+        b.ret(null)
         b.endFunction()
         val ir = b.render()
         assertTrue(ir.contains("jsr $$ffba"), ir)
@@ -972,10 +1081,12 @@ ldy #0
 sta ($0),y
 ```
 
-with the scratch slot passed as a pointer operand (`"r"(ptr %slot)`). **Verified
-at IR level**: a program that set A to `$42`, read it with this sequence into
-an `alloca`, and stored the result to `$0400` read back `42` — the same value
-`pha`/`pla` produced.
+The scratch slot is created inside `readA` with `b.alloca(IrType.I8)` and
+passed as a pointer operand (`"r"(i8* %slot)`); the accessor assumes the
+current block is `entry` (the slot is an `alloca`).
+**Verified at IR level**: a program that set A to `$42`, read it with this
+sequence into an `alloca`, and stored the result to `$0400` read back `42` —
+the same value `pha`/`pla` produced.
 
 The constraint string is just `"r"` — **the backend rejects a clobber list**
 here. Adding `"a", "y", "memory"` produces `error: expected instruction
@@ -996,7 +1107,7 @@ tax
 pla
 plp
 ```
-with `"=x,x"`. The number of `lsr` instructions is `mask.bitCount() - 1` — for mask `1` (carry) none, for `2` (zero) one, for `128` (negative) seven. The `lsr` count normalises the bit to position 0 so the result is `0` or `1`.
+with `"=x,x"`. The number of `lsr` instructions is the **bit position** of the mask (`mask.trailingZeros()`; the mask is a single bit) — for mask `1` (carry) none, for `2` (zero) one, for `128` (negative) seven. The `lsr` count normalises the bit to position 0 so the result is `0` or `1`.
 
 **`writeRegister`** — an empty template with an input constraint:
 
