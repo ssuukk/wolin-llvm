@@ -98,10 +98,10 @@ class IrBuilder {
 
     /** The label of the current block. */
     fun block(): String = requireFunction().current.label
-
     /**
      * Materialises a value of [type] and returns its SSA name. The value is
-     * defined by a zero constant, so the caller can use the name right away.
+     * defined by a zero-producing instruction, so the caller can use the name
+     * right away. [IrType.Ptr] yields a null pointer.
      */
     fun value(type: IrType): IrValue {
         val text = when (type) {
@@ -125,8 +125,8 @@ class IrBuilder {
      * is rendered verbatim, so a caller that spells the operands out in the
      * text gets exactly what it wrote.
      *
-     * [operands] are the values the instruction reads. The builder does not
-     * rewrite the text from them; they record what the instruction reads.
+     * [operands] is kept for the brief's signature; the builder does not read
+     * it. Callers pass the values they spelled into [text].
      */
     fun instr(type: IrType, text: String, operands: List<IrValue> = emptyList()): IrValue {
         val block = requireFunction().current
@@ -148,6 +148,9 @@ class IrBuilder {
         val fn = requireFunction()
         val block = fn.current
         check(block.terminator == null) { "block ${block.label} already has a terminator" }
+        check(type != IrType.Void && type !is IrType.Array) {
+            "a phi cannot have type ${type.llvmName()}"
+        }
         val name = fn.freshValue()
         val entries = incoming.joinToString(", ") { (value, label) ->
             "[ ${value.name}, %${label.trimStart('%')} ]"
@@ -163,6 +166,9 @@ class IrBuilder {
 
     /** Terminates the current block with a conditional branch. */
     fun condBranch(cond: IrValue, ifTrue: String, ifFalse: String) {
+        check(cond.type == IrType.I1) {
+            "condBranch needs an i1 condition, not ${cond.type.llvmName()}"
+        }
         terminate(
             "br i1 ${cond.name}, label %${ifTrue.trimStart('%')}, label %${ifFalse.trimStart('%')}"
         )
@@ -170,6 +176,16 @@ class IrBuilder {
 
     /** Terminates the current block with a return. */
     fun ret(value: IrValue?) {
+        val fn = requireFunction()
+        if (value == null) {
+            check(fn.retType == IrType.Void) {
+                "function ${fn.name} returns ${fn.retType.llvmName()}, not void"
+            }
+        } else {
+            check(value.type == fn.retType) {
+                "ret type ${value.type.llvmName()} does not match function type ${fn.retType.llvmName()}"
+            }
+        }
         terminate(
             if (value == null || value.type == IrType.Void) "ret void"
             else "ret ${value.type.llvmName()} ${value.name}"
@@ -235,25 +251,29 @@ class IrBuilder {
         args.joinToString(", ") { "${it.type.llvmName()} ${it.name}" }
 
     /**
-     * A symbol is `@name`, a function pointer `%ptr`, an inline asm `asm …`.
-     * A name that is not a plain identifier — a mangled name with dots, for
-     * instance — is quoted.
+     * A target is `@name` or a function pointer `%ptr`. A name that is not a
+     * plain identifier — a mangled name with dots, for instance — is quoted.
      */
     private fun renderTarget(target: String): String = when {
-        target.startsWith("%") || target.startsWith("@") || target.startsWith("asm") -> target
+        target.startsWith("%") || target.startsWith("@") -> target
         else -> "@${quoteIfNeeded(target)}"
     }
 
     /**
-     * LLVM accepts a bare symbol only when it starts with a letter, `_`, `$`
-     * or `-` and continues with letters, digits, `_`, `$` or `-`. A name
-     * outside that set — a mangled name with dots, for instance — is quoted.
+     * LLVM accepts a bare symbol only when it starts with an ASCII letter,
+     * `_`, `$` or `-` and continues with ASCII letters, digits, `_`, `$` or
+     * `-`. A name outside that set — a mangled name with dots, for instance —
+     * is quoted.
      */
     private fun quoteIfNeeded(name: String): String {
         if (name.length >= 2 && name.startsWith("\"") && name.endsWith("\"")) return name
         val plain = name.isNotEmpty() &&
-            (name[0].isLetter() || name[0] == '_' || name[0] == '$' || name[0] == '-') &&
-            name.all { it.isLetterOrDigit() || it in "_$-" }
+            (isAsciiLetter(name[0]) || name[0] == '_' || name[0] == '$' || name[0] == '-') &&
+            name.all { isAsciiLetterOrDigit(it) || it in "_$-" }
         return if (plain) name else "\"$name\""
     }
+
+    private fun isAsciiLetter(c: Char): Boolean = c in 'A'..'Z' || c in 'a'..'z'
+
+    private fun isAsciiLetterOrDigit(c: Char): Boolean = isAsciiLetter(c) || c in '0'..'9'
 }

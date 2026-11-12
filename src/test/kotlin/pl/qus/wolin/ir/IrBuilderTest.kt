@@ -133,4 +133,18 @@ class IrBuilderTest {
         assertEquals("%v0", first.name)
         assertEquals("%v0", second.name)
     }
+
+    @Test fun `a function whose name starts with asm is still a symbol`() {
+        val b = IrBuilder()
+        b.startFunction("asmfoo", IrType.Void)
+        b.ret(null)
+        b.endFunction()
+        assertTrue(b.render().contains("define void @asmfoo()"), b.render())
+    }
+
+    @Test fun `a return that does not match the function type is rejected`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I32)
+        assertThrows<IllegalStateException> { b.ret(IrValue("%v0", IrType.I8)) }
+    }
 }
