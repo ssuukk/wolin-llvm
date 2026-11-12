@@ -121,24 +121,22 @@ class IrBuilder {
      * Emits one instruction and returns the SSA name of its result.
      *
      * [text] is the instruction itself without the result binding — the
-     * builder allocates the name and writes it in front of the text.
-     *
-     * [operands] are the values the instruction reads. The text may refer to
-     * them by index — `{0}`, `{1}`, … — and the builder replaces every such
-     * placeholder with the operand's name. Text without placeholders is
-     * rendered verbatim, so a caller that spells the operands out in the
+     * builder allocates the name and writes it in front of the text. [text]
+     * is rendered verbatim, so a caller that spells the operands out in the
      * text gets exactly what it wrote.
+     *
+     * [operands] are the values the instruction reads. The builder does not
+     * rewrite the text from them; they record what the instruction reads.
      */
     fun instr(type: IrType, text: String, operands: List<IrValue> = emptyList()): IrValue {
         val block = requireFunction().current
         check(block.terminator == null) { "block ${block.label} already has a terminator" }
-        val rendered = substitute(text, operands)
         if (type == IrType.Void) {
-            block.instructions += rendered
+            block.instructions += text
             return IrValue("", IrType.Void)
         }
         val name = requireFunction().freshValue()
-        block.instructions += "$name = $rendered"
+        block.instructions += "$name = $text"
         return IrValue(name, type)
     }
 
@@ -221,32 +219,6 @@ class IrBuilder {
     }
 
     private fun requireFunction(): Function = open ?: throw IllegalStateException("no function is open")
-
-    /** Replaces every `{n}` placeholder in [text] with the n-th operand. */
-    private fun substitute(text: String, operands: List<IrValue>): String {
-        if (operands.isEmpty() || '{' !in text) return text
-        val out = StringBuilder(text.length)
-        var i = 0
-        while (i < text.length) {
-            val c = text[i]
-            if (c == '{') {
-                val end = text.indexOf('}', i)
-                if (end > i) {
-                    val index = text.substring(i + 1, end).toIntOrNull()
-                    if (index != null) {
-                        val operand = operands.getOrNull(index)
-                            ?: throw IllegalArgumentException("no operand at index $index")
-                        out.append(operand.name)
-                        i = end + 1
-                        continue
-                    }
-                }
-            }
-            out.append(c)
-            i++
-        }
-        return out.toString()
-    }
 
     private fun emitCall(type: IrType, target: String, args: List<IrValue>): IrValue {
         val text = "call ${type.llvmName()} ${renderTarget(target)}(${renderArgs(args)})"

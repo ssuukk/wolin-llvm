@@ -88,6 +88,15 @@ class IrBuilderTest {
         assertEquals(IrType.Ptr, slot.type)
     }
 
+    @Test fun `an instruction text is rendered verbatim`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I8)
+        val v = b.instr(IrType.I8, "add i8 %a, %b", listOf(IrValue("%a", IrType.I8), IrValue("%b", IrType.I8)))
+        b.ret(v)
+        b.endFunction()
+        assertTrue(b.render().contains("${v.name} = add i8 %a, %b"), b.render())
+    }
+
     @Test fun `calls render their result type and arguments`() {
         val b = IrBuilder()
         b.startFunction("f", IrType.I32)
