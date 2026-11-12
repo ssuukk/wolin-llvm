@@ -200,6 +200,7 @@ class StmtEmitter(private val b: IrBuilder) {
                 unconditionalBranch(elseL)
                 openReserved(elseL)
                 emitWhenEntryBody(elseEntry, endL)
+                openReserved(endL)
             }
             return
         }

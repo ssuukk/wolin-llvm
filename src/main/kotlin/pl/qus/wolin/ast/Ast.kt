@@ -64,7 +64,7 @@ sealed interface Ast {
     data class CharLit(val value: Int, override var type: WolinType) : Expr
     data class StringLit(val bytes: ByteArray, override var type: WolinType) : Expr
     data class VarRef(val name: String, override var type: WolinType) : Expr
-    data class UnaryOp(val op: String, val operand: Expr, override var type: WolinType) : Expr
+    data class UnaryOp(val op: String, val operand: Expr, override var type: WolinType, val prefix: Boolean = false) : Expr
     data class BinaryOp(val op: String, val left: Expr, val right: Expr, override var type: WolinType) : Expr
     data class Call(val callee: Expr, val args: List<Expr>, override var type: WolinType) : Expr
     data class Assign(val target: Expr, val value: Expr, override var type: WolinType, val op: String = "=") : Expr

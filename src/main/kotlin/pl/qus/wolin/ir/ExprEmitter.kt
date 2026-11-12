@@ -185,9 +185,10 @@ class ExprEmitter(
     }
 
     /**
-     * `++`/`--`. The typed AST keeps no trace of prefix vs. postfix, so both
-     * are emitted as the postfix read-modify-write: the old value is the
-     * result, the incremented one is stored.
+     * `++`/`--`. Postfix (the default) is the read-modify-write with the old
+     * value as the result: the loaded value is returned, the updated one is
+     * stored. Prefix stores the updated value and returns it. A non-variable
+     * operand has no storage: postfix returns it as is, prefix the update.
      */
     private fun emitIncDec(e: UnaryOp, delta: Long): IrValue {
         val ty = TypeMapper.ir(e.type)
@@ -199,10 +200,10 @@ class ExprEmitter(
             val t = loadVar(s, ty)
             val r = b.instr(ty, "$op ${ty.llvmName()} ${t.name}, ${abs(delta)}")
             storeVar(s, r, ty)
-            return t
+            return if (e.prefix) r else t
         }
         val v = emit(operand)
-        return b.instr(ty, "$op ${ty.llvmName()} ${v.name}, ${abs(delta)}")
+        return if (e.prefix) b.instr(ty, "$op ${ty.llvmName()} ${v.name}, ${abs(delta)}") else v
     }
 
     // ---- binary -----------------------------------------------------------

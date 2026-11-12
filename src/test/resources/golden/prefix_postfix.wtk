@@ -1,0 +1,9 @@
+fun f(): ubyte {
+    var x: ubyte = 5
+    var a: ubyte = 0
+    var b: ubyte = 0
+    a = x++
+    b = ++x
+    x--
+    return a + b
+}

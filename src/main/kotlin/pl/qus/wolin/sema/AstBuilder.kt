@@ -250,7 +250,7 @@ class AstBuilder {
                 operation.EXCL() != null -> "!"
                 else -> unsupported("prefix operator")
             }
-            result = UnaryOp(op, result, Types.unit)
+            result = UnaryOp(op, result, Types.unit, prefix = true)
         }
         return result
     }
