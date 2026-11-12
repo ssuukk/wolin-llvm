@@ -133,6 +133,7 @@ class AstBuilder {
             declaration.typeAlias()?.let { unsupported("type alias") }
         }
         val expression = ctx.blockLevelExpression()?.expression() ?: unsupported("statement")
+        bareWhen(expression)?.let { return buildWhen(it) }
         return try {
             expressionToStatement(buildExpression(expression))
         } catch (signal: StmtSignal) {
@@ -159,6 +160,7 @@ class AstBuilder {
         if (ctx == null) return emptyList()
         ctx.block()?.let { return listOf(BlockStmt(buildStatements(it.statements()))) }
         ctx.expression()?.let { expression ->
+            bareWhen(expression)?.let { return listOf(buildWhen(it)) }
             return try {
                 listOf(expressionToStatement(buildExpression(expression)))
             } catch (signal: StmtSignal) {
@@ -304,6 +306,62 @@ class AstBuilder {
         val then = buildControlBody(ctx.controlStructureBody().getOrNull(0))
         val otherwise = buildControlBody(ctx.controlStructureBody().getOrNull(1))
         return IfExpr(cond, then, otherwise, Types.unit)
+    }
+
+    private fun buildWhen(ctx: KotlinParser.WhenExpressionContext): WhenStmt {
+        val subject = ctx.expression()?.let { buildExpression(it) }
+        val entries = ctx.whenEntry().map { buildWhenEntry(it) }
+        return WhenStmt(subject, entries)
+    }
+
+    private fun buildWhenEntry(ctx: KotlinParser.WhenEntryContext): WhenEntry {
+        val isElse = ctx.ELSE() != null
+        val conditions = ctx.whenCondition().map { condition ->
+            condition.expression()?.let { buildExpression(it) }
+                ?: condition.rangeTest()?.let { unsupported("range test in when (v2)") }
+                ?: condition.typeTest()?.let { unsupported("type test in when (v2)") }
+                ?: unsupported("when condition")
+        }
+        return WhenEntry(conditions, buildControlBody(ctx.controlStructureBody()), isElse)
+    }
+
+    /**
+     * The `when` a statement is built from, when the whole statement
+     * expression is a bare `when` — no assignment, no operator, no wrapper
+     * of any kind. A `when` anywhere else in an expression stays
+     * unsupported (v2).
+     */
+    private fun bareWhen(expression: KotlinParser.ExpressionContext): KotlinParser.WhenExpressionContext? {
+        if (expression.assignmentOperator().isNotEmpty()) return null
+        val disjunctions = expression.disjunction()
+        if (disjunctions.size != 1) return null
+        val conjunctions = disjunctions[0].conjunction()
+        if (conjunctions.size != 1) return null
+        val equalities = conjunctions[0].equalityComparison()
+        if (equalities.size != 1) return null
+        val comparisons = equalities[0].comparison()
+        if (comparisons.size != 1) return null
+        val namedInfixes = comparisons[0].namedInfix()
+        if (namedInfixes.size != 1) return null
+        if (namedInfixes[0].isOperator() != null || namedInfixes[0].inOperator().isNotEmpty()) return null
+        val elvises = namedInfixes[0].elvisExpression()
+        if (elvises.size != 1 || elvises[0].ELVIS().isNotEmpty()) return null
+        val infixCalls = elvises[0].infixFunctionCall()
+        if (infixCalls.size != 1 || infixCalls[0].simpleIdentifier().isNotEmpty()) return null
+        val ranges = infixCalls[0].rangeExpression()
+        if (ranges.size != 1 || ranges[0].RANGE().isNotEmpty()) return null
+        val additives = ranges[0].additiveExpression()
+        if (additives.size != 1 || additives[0].additiveOperator().isNotEmpty()) return null
+        val multiplications = additives[0].multiplicativeExpression()
+        if (multiplications.size != 1 || multiplications[0].multiplicativeOperation().isNotEmpty()) return null
+        val typeRHSes = multiplications[0].typeRHS()
+        if (typeRHSes.size != 1 || typeRHSes[0].typeOperation().isNotEmpty()) return null
+        val prefixes = typeRHSes[0].prefixUnaryExpression()
+        if (prefixes.size != 1 || prefixes[0].prefixUnaryOperation().isNotEmpty()) return null
+        val postfix = prefixes[0].postfixUnaryExpression() ?: return null
+        if (postfix.callableReference() != null || postfix.postfixUnaryOperation().isNotEmpty()) return null
+        val atomic = postfix.atomicExpression() ?: return null
+        return atomic.conditionalExpression()?.whenExpression()
     }
 
     private fun buildJump(ctx: KotlinParser.JumpExpressionContext): Expr {

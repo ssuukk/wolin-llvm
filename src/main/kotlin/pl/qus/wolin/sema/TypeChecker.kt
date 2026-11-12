@@ -123,7 +123,43 @@ class TypeChecker {
                 }
             }
 
+            is WhenStmt -> checkWhen(stmt)
+            is WhenEntry -> throw SemaException("A when entry cannot appear outside a when")
+
             is BreakStmt, is ContinueStmt -> Unit
+        }
+    }
+
+    private fun checkWhen(stmt: WhenStmt) {
+        val subjectType = stmt.subject?.let { checkExpr(it, null) }
+        if (subjectType != null && (subjectType.kind == TypeKind.UNIT || subjectType.kind == TypeKind.STRING)) {
+            throw SemaException("when subject must be comparable, not $subjectType")
+        }
+        var seenElse = false
+        stmt.entries.forEach { entry ->
+            if (entry.isElse) {
+                if (seenElse) throw SemaException("A when can have only one else branch")
+                seenElse = true
+            } else {
+                if (seenElse) throw SemaException("The else branch of a when must be last")
+                entry.conditions.forEach { condition ->
+                    // A literal takes the subject's type, so `when (x: uword) { 1 -> }`
+                    // compares `uword`s, exactly like `x == 1`.
+                    val condType = if (condition is IntLit && subjectType != null) {
+                        checkExpr(condition, subjectType)
+                    } else {
+                        checkExpr(condition, null)
+                    }
+                    if (subjectType != null) {
+                        if (condType != subjectType) {
+                            throw SemaException("when condition type $condType does not match subject type $subjectType")
+                        }
+                    } else {
+                        requireBool(condType, "when condition")
+                    }
+                }
+            }
+            checkBranch(entry.body, null)
         }
     }
 

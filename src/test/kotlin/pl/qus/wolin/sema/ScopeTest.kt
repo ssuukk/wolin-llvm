@@ -42,6 +42,10 @@ class ScopeTest {
                 }
                 is Ast.WhileStmt -> { walkExpr(s.cond); s.body.forEach { walkStmt(it) } }
                 is Ast.ReturnStmt -> s.value?.let(::walkExpr)
+                is Ast.WhenStmt -> s.entries.forEach { entry ->
+                    entry.conditions.forEach(::walkExpr); entry.body.forEach { walkStmt(it) }
+                }
+                is Ast.WhenEntry -> {}
                 is Ast.BreakStmt, is Ast.ContinueStmt -> {}
             }
         }

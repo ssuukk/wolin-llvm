@@ -1,0 +1,9 @@
+fun pick(x: ubyte): ubyte {
+    var r: ubyte = 0
+    when (x) {
+        1 -> { r = 10 }
+        2, 3 -> { r = 20 }
+        else -> { r = 30 }
+    }
+    return r
+}

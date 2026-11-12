@@ -86,6 +86,14 @@ sealed interface Ast {
     data class BreakStmt(val label: String?) : Stmt
     data class ContinueStmt(val label: String?) : Stmt
     data class ReturnStmt(val value: Expr?) : Stmt
+    data class WhenEntry(val conditions: List<Expr>, val body: List<Stmt>, val isElse: Boolean) : Ast.Stmt
+
+    /**
+     * A `when` in statement position. With a [subject] the subject is compared
+     * for equality against each condition in order; without, each condition is
+     * a boolean tested directly. The first matching entry runs.
+     */
+    data class WhenStmt(val subject: Expr?, val entries: List<WhenEntry>) : Ast.Stmt
 
     /**
      * A nested block. Every block that is not a function body appears as
@@ -148,3 +156,5 @@ typealias BlockStmt = Ast.BlockStmt
 typealias IfExpr = Ast.IfExpr
 typealias ArrayAccess = Ast.ArrayAccess
 typealias NullLit = Ast.NullLit
+typealias WhenEntry = Ast.WhenEntry
+typealias WhenStmt = Ast.WhenStmt
