@@ -38,4 +38,27 @@ class CpuAccessorTest {
         b.endFunction()
         assertTrue(b.render().contains("and #128"))
     }
+
+    @Test fun `readAxLow reads A via pha pla`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I8)
+        val v = CpuAccessors.readAxLow(b)
+        b.ret(v)
+        b.endFunction()
+        val ir = b.render()
+        assertTrue(ir.contains("pha\\0Apla"), ir)
+        assertTrue(ir.contains("\"=a\"()"), ir)
+    }
+
+    @Test fun `readAxHigh reads X via txa tax`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I8)
+        val v = CpuAccessors.readAxHigh(b)
+        b.ret(v)
+        b.endFunction()
+        val ir = b.render()
+        assertTrue(ir.contains("pha\\0Atxa\\0Atax\\0Apla"), ir)
+        assertTrue(ir.contains("\"=x\"()"), ir)
+    }
+
 }

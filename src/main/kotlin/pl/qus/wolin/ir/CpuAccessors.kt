@@ -37,6 +37,7 @@ object CpuAccessors {
      * mask 1 (carry), one for 2 (zero), seven for 128 (negative).
      */
     fun readFlag(b: IrBuilder, mask: Int): IrValue {
+        check(mask != 0 && (mask and (mask - 1)) == 0) { "flag mask must be a single bit, got: $mask" }
         val parts = mutableListOf("php", "pha", "php", "pla", "and #$mask")
         repeat(Integer.numberOfTrailingZeros(mask)) { parts.add("lsr") }
         parts += listOf("tax", "pla", "plp")
@@ -58,6 +59,14 @@ object CpuAccessors {
     fun readAxHigh(b: IrBuilder): IrValue =
         b.instr(IrType.I8, "call i8 asm sideeffect \"pha\\0Atxa\\0Atax\\0Apla\", \"=x\"()")
 
-    /** The register letter of a name like `"CPU.A"`, lowercased. */
-    private fun String.constraintChar(): String = removePrefix("CPU.").lowercase()
+}
+
+/**
+ * The register letter of a name like `"CPU.A"`, lowercased. Only the
+ * single-letter registers the accessors pin are valid.
+ */
+internal fun String.constraintChar(): String {
+    val c = removePrefix("CPU.").lowercase()
+    check(c in setOf("a", "x", "y")) { "expected CPU.A/CPU.X/CPU.Y, got: $this" }
+    return c
 }

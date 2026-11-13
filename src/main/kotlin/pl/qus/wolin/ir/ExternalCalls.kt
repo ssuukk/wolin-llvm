@@ -22,6 +22,4 @@ class ExternalCalls {
         b.instr(IrType.Void, text)
     }
 
-    /** The register letter of a name like `"CPU.A"`, lowercased. */
-    private fun String.constraintChar(): String = removePrefix("CPU.").lowercase()
 }
