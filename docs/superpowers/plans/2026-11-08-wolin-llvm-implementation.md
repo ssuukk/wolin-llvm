@@ -19,7 +19,7 @@
 - IR is validated before linking with `mos-c64-clang -fno-lto -O2 -x ir -c out.ll -o /dev/null`. The final link uses the SDK default configuration (which enables `-flto`).
 - **Inline-asm constraints the backend accepts** (verified; anything else crashes or miscompiles):
   - `"a"(v)`, `"y"(v)`, `"x"(v)` — input constraints, pin the value in that register.
-  - `"=a,a"(v)`, `"=x,x"(v)` — output **plus** a matching input. A bare `"=a"` or `"=x"` is rejected: `number of input constraints does not match number of parameters`.
+  - An input constraint requires a matching parameter (upstream LLVM `InlineAsm::verify`): `"=a,a"()` — an input constraint with **no operand** — is rejected: `number of input constraints does not match number of parameters`. Pure reads therefore use **output-only** constraints (`"=a"` / `"=x"`, no operand); writes pin their value with a plain input constraint (`"a"(v)`).
   - `"=m"(ptr)` **does not substitute an address** — never store to a specific address from inside inline asm. Deliver the value in a register and let LLVM store it.
   - `"cc"` constraint crashes the backend (`unable to translate instruction: call`).
   - `asm goto` crashes the backend (`unable to translate instruction: callbr`).

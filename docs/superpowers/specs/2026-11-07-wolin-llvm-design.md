@@ -933,7 +933,7 @@ plp        restore P         (P1)
 The stack order matters: A is pushed between the two P pushes, so the pops come
 out P2, A, P1. `PLA` and `AND` damage N and Z on the way through; the final
 `PLP` restores P exactly, so the damage is undone. The result is delivered in X,
-so the IR constraint is `"=x,x"`.
+so the IR constraint is `"=x"` (output-only, no operand).
 
 The mask is a compile-time constant, so it is baked into the template as a
 literal immediate (`and #1`, `and #2`, `and #128`) — an immediate operand in
@@ -1007,6 +1007,8 @@ emit register access:
 | `"a"(v)` input constraint | works — pins the value in A |
 | `"=a,a"(v)` output + input | works — the value comes back in A |
 | `"=x,x"(v)` output + input | works — the value comes back in X |
+| `"=a,a"()` / `"=x,x"()` output + input, **no operand** | **rejected**: `number of input constraints does not match number of parameters` — upstream LLVM `InlineAsm::verify` requires one parameter per input constraint |
+| `"=a"()` / `"=x"()` output-only, no operand | works — no prologue, returns the live register (verified 2026-11-13; this is the form the pure reads use) |
 | `"=x"(v)` output with no input | **rejected**: `number of input constraints does not match number of parameters` |
 | `"=m"(ptr)` memory output operand | **does not substitute an address** — the store lands in the wrong place |
 | `"cc"` constraint | backend crash: `unable to translate instruction: call` |
@@ -1016,8 +1018,13 @@ emit register access:
 
 Two consequences:
 
-- **Every output constraint needs a matching input.** The compiler emits
-  `"=a,a"` / `"=x,x"`, never a bare `"=a"`.
+- **An input constraint requires a matching parameter — in both directions.**
+  `"=a,a"()` (input, no parameter) and `"=a"(v)` (parameter, no input) are
+  both rejected with the same error; the check is upstream LLVM
+  (`InlineAsm::verify`), not the MOS backend. Pure reads therefore use
+  **output-only** constraints (`"=a"` / `"=x"`, no operand) — verified
+  2026-11-13: no prologue is emitted and the live register value is
+  returned. Writes pin their value with a plain input constraint.
 - **A value that must be stored to a specific address cannot be stored by the
   inline assembly.** The assembly delivers the value in a register and LLVM
   performs the store. This is why the `CPU.A` read uses a scratch slot written
