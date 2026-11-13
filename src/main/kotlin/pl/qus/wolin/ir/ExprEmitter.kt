@@ -339,7 +339,7 @@ class ExprEmitter(
         return when (a.op) {
             ".=" -> {
                 val n = b.instr(ty, "xor ${ty.llvmName()} ${v.name}, ${allBits(ty)}")
-                b.instr(ty, "and ${ty.llvmName()} ${t.name}, $n.name")
+                b.instr(ty, "and ${ty.llvmName()} ${t.name}, ${n.name}")
             }
             else -> b.instr(ty, "${assignOp(a)} ${ty.llvmName()} ${t.name}, ${v.name}")
         }

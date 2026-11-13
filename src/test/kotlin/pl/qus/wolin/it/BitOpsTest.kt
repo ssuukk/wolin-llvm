@@ -1,0 +1,50 @@
+package pl.qus.wolin.it
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class BitOpsTest {
+    @Test fun `set bits ORs the mask in`() {
+        val bytes = runProgram("""
+            fun main() {
+                var x: ubyte = 0b00000000
+                x := 0b00001111
+                var out: ubyte^0x400 = 0
+                out = x
+                while (true) {}
+            }
+        """)
+        assertEquals(0x0F, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test fun `clear bits ANDs the complement in`() {
+        val bytes = runProgram("""
+            fun main() {
+                var x: ubyte = 0b11111111
+                x .= 0b00001111
+                var out: ubyte^0x400 = 0
+                out = x
+                while (true) {}
+            }
+        """)
+        assertEquals(0xF0, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test fun `and-assign and or-assign are bitwise`() {
+        val bytes = runProgram("""
+            fun main() {
+                var x: ubyte = 0b11110000
+                x &= 0b00111100
+                var y: ubyte = 0b11110000
+                y |= 0b00001111
+                var out0: ubyte^0x400 = 0
+                var out1: ubyte^0x401 = 0
+                out0 = x
+                out1 = y
+                while (true) {}
+            }
+        """)
+        assertEquals(0x30, bytes[0].toInt() and 0xFF)   // x &= 0b00111100
+        assertEquals(0xFF, bytes[1].toInt() and 0xFF)   // y |= 0b00001111
+    }
+}
