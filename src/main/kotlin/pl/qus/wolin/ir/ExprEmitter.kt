@@ -166,7 +166,7 @@ class ExprEmitter(
 
     /** The `inttoptr` of a fixed address, spelled the way the backend folds it. */
     private fun fixedPtr(address: Int, element: IrType): IrValue =
-        b.instr(IrType.Ptr, "inttoptr (i64 $address to ${if (element == IrType.I16) "i16*" else "i8*"})")
+        b.instr(IrType.Ptr, "inttoptr i64 $address to ${if (element == IrType.I16) "i16*" else "i8*"}")
 
     // ---- unary ------------------------------------------------------------
 

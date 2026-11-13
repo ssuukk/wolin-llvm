@@ -35,7 +35,7 @@ class GoldenIrTest {
             }
         """.trimIndent()
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
-        assertTrue(ir.contains("inttoptr (i64 1024 to i8*)"), ir)
+        assertTrue(ir.contains("inttoptr i64 1024 to i8*"), ir)
         assertTrue(ir.contains("store volatile i8"), ir)
         assertEquals(1, Regex("alloca").findAll(ir).count(), "only r takes a stack slot:\n$ir")
     }
