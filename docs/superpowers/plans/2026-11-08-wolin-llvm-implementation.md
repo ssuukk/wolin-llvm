@@ -1259,22 +1259,33 @@ in the order the files were given, then calls the user's `main`:
 ```
 target triple = "mos-c64"
 
-@__wolin_init_globals_a = internal void () {
-entry:
-  call void @__wolin_init_file_a()
-  ret void
-}
+declare void @__wolin_init_file_a()
+declare void @__wolin_init_file_b()
+declare void @"game.demo.main"()
 
 define i32 @main() {
 entry:
-  call void @__wolin_init_globals_a()
-  call void @__wolin_init_globals_b()
+  call void @__wolin_init_file_a()
+  call void @__wolin_init_file_b()
   call void @"game.demo.main"()
   ret i32 0
 }
 ```
 
 Each file contributes `__wolin_init_file_<mangled>`; the driver calls them in command-line order, then calls the user's `main`. If no file declares `main`, the driver returns immediately.
+
+**The `declare` lines are required, not decoration.** The SDK compiles every
+input module on its own (`-cc1 -emit-llvm-bc -flto-unit`), and the LLVM
+textual parser rejects a call to an undeclared global ("use of undefined
+value") — so each cross-module function the driver calls needs a `declare`
+in the driver module. `main` stays the only *defined* function there. The
+declaration text must match `IrBuilder`'s own quoting (`@"name"` when the
+name needs it, bare otherwise) so a declare cannot drift from the call.
+
+**The init function needs default (external) linkage.** It lives in the
+file's module and is called from the driver module; an `internal` symbol is
+not exported from its module, so the cross-module reference cannot resolve
+at the LTO link.
 
 - [ ] **Step 6: Write `Linker.kt`**
 
@@ -1289,7 +1300,7 @@ Each file contributes `__wolin_init_file_<mangled>`; the driver calls them in co
 ```
 wolinc [options] <file.wtk>...
   -o, --output <file>     output .prg (default: first input's name)
-  -d, --debug             keep intermediate .ll and emit a link map
+  -d, --debug             keep intermediate .ll files (no link map in v1)
   -e, --emit-ir           write .ll and stop
   -S, --sdk <dir>         llvm-mos SDK path (overrides discovery)
       --target <name>     c64 (default)
@@ -2084,7 +2095,7 @@ Expected: FAIL — the CLI is not wired to the pipeline end to end.
 
 - [ ] **Step 3: Wire the CLI to the pipeline**
 
-`Main` compiles every input file, emits the per-file `.ll` modules and the driver module, validates, and links. `--emit-ir` stops after writing the `.ll` files. `--keep-ir` leaves them next to the `.prg`. `--debug` also writes the link map.
+`Main` compiles every input file, emits the per-file `.ll` modules and the driver module, validates, and links. `--emit-ir` stops after writing the `.ll` files. `--keep-ir` leaves them next to the `.prg`. `--debug` keeps the intermediate `.ll` files (there is no link map in v1).
 
 - [ ] **Step 4: Write the README**
 
