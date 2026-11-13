@@ -392,6 +392,11 @@ class ExprEmitter(
         }
     }
 
+    /** Store [v] to the fixed [address] — the same volatile store fixed-address variables use. */
+    fun emitStoreFixed(address: Int, v: IrValue, ty: IrType) {
+        storeVar(VarStorage.Fixed(address), v, ty)
+    }
+
     // ---- arrays -------------------------------------------------------------
 
     private fun emitArrayAccess(a: ArrayAccess): IrValue {

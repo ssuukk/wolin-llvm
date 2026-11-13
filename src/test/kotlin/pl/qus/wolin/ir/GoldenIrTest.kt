@@ -25,6 +25,21 @@ class GoldenIrTest {
         assertTrue(ir.contains("inttoptr (i64 53280 to i8*)"), ir)
     }
 
+    @Test fun `a local fixed address aliases the memory`() {
+        val src = """
+            fun f(): ubyte {
+                var out: ubyte^0x400 = 5
+                out = 6
+                var r: ubyte = out
+                return r
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("inttoptr (i64 1024 to i8*)"), ir)
+        assertTrue(ir.contains("store volatile i8"), ir)
+        assertEquals(1, Regex("alloca").findAll(ir).count(), "only r takes a stack slot:\n$ir")
+    }
+
     @Test fun `an else-only when followed by a statement compiles to valid IR`() {
         val src = """
             fun f(): ubyte {

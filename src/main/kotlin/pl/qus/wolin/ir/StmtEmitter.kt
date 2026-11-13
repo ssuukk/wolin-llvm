@@ -80,7 +80,8 @@ class StmtEmitter(private val b: IrBuilder) {
 
         val decls = mutableListOf<LocalDecl>()
         collectLocalDecls(fn.body, decls)
-        decls.forEach { localSlots[it] = b.alloca(TypeMapper.ir(it.type)) }
+        decls.filter { it.location !is FixedAddress && it.location !is FixedArray }
+             .forEach { localSlots[it] = b.alloca(TypeMapper.ir(it.type)) }
 
         fn.body.forEach { emit(it) }
 
@@ -127,12 +128,27 @@ class StmtEmitter(private val b: IrBuilder) {
     }
 
     private fun emitLocalDecl(d: LocalDecl) {
-        val ptr = localSlots[d] ?: throw error("Local ${d.name} has no slot")
-        d.init?.let { init ->
-            val v = expr.emit(init)
-            b.instr(IrType.Void, "store ${TypeMapper.ir(d.type).llvmName()} ${v.name}, ptr ${ptr.name}")
+        when (val loc = d.location) {
+            is FixedAddress -> {
+                d.init?.let { init ->
+                    val v = expr.emit(init)
+                    expr.emitStoreFixed(loc.address, v, TypeMapper.ir(d.type))
+                }
+                vars.declare(d.name, VarStorage.Fixed(loc.address))
+            }
+            is FixedArray -> {
+                if (d.init != null) throw error("fixed array locals take no initialiser")
+                vars.declare(d.name, VarStorage.Fixed(loc.address))
+            }
+            else -> {
+                val ptr = localSlots[d] ?: throw error("Local ${d.name} has no slot")
+                d.init?.let { init ->
+                    val v = expr.emit(init)
+                    b.instr(IrType.Void, "store ${TypeMapper.ir(d.type).llvmName()} ${v.name}, ptr ${ptr.name}")
+                }
+                vars.declare(d.name, VarStorage.Local(ptr))
+            }
         }
-        vars.declare(d.name, VarStorage.Local(ptr))
     }
 
     private fun emitIf(s: IfStmt) {
