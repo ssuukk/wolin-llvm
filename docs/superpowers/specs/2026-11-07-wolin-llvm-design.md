@@ -860,11 +860,20 @@ var border: ubyte^0xd020
 ```
 →
 ```llvm
-%v = load i8, ptr inttoptr (i64 53280 to i8*)
-store i8 %x, ptr inttoptr (i64 53280 to i8*)
+%p = inttoptr i64 53280 to i8*
+%v = load i8, ptr %p
+store i8 %x, ptr %p
 ```
 
 The address is a compile-time constant, so the backend folds it into `sta 53280`.
+
+**Spelling matters.** `inttoptr` in *instruction* position takes no
+parentheses: `inttoptr i64 53280 to i8*`. The parenthesised form
+(`inttoptr (i64 53280 to i8*)`) is the *constant-expression* spelling — it
+is valid in a global initialiser
+(`@"t.border" = global i8* inttoptr (i64 53280 to i8*)`) and inline in an
+operand, but clang rejects it as a standalone instruction
+(`error: expected type`). Verified against the real backend on 2026-11-13.
 
 ### 7.2 CPU-register-backed variables
 
