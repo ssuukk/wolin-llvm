@@ -20,7 +20,7 @@ class Linker(private val sdk: Sdk) {
      * configuration enables `-flto`, which is what we want.
      */
     fun link(llFiles: List<Path>, output: Path, workDir: Path) {
-        run(llFiles.map { it.toString() } + listOf("-o", output.toString()), workDir)
+        run(listOf("-O2") + llFiles.map { it.toString() } + listOf("-o", output.toString()), workDir)
     }
 
     private fun run(args: List<String>, workDir: Path?) {

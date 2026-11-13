@@ -1,8 +1,10 @@
 package pl.qus.wolin.driver
 
+import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.io.TempDir
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -22,5 +24,12 @@ class SdkLocatorTest {
             SdkLocator.locate(null, emptyMap(), globRoots = listOf(Path.of("/also/nope")))
         }
         assertTrue(e.message!!.contains("WOLIN_SDK"), e.message)
+    }
+
+    @Test fun `glob picks newest sdk version`(@TempDir root: Path) {
+        Files.createDirectories(root.resolve("sdk-v1.4.0"))
+        Files.createDirectories(root.resolve("sdk-v23.2.0"))
+        val sdk = SdkLocator.locate(null, emptyMap(), globRoots = listOf(root))
+        assertEquals(root.resolve("sdk-v23.2.0"), sdk.root)
     }
 }

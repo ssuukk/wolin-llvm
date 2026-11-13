@@ -20,7 +20,7 @@ import kotlin.system.exitProcess
 private const val USAGE = """
 wolinc [options] <file.wtk>...
   -o, --output <file>     output .prg (default: first input's name)
-  -d, --debug             keep intermediate .ll and emit a link map
+  -d, --debug             keep intermediate .ll files (no link map in v1)
   -e, --emit-ir           write .ll and stop
   -S, --sdk <dir>         llvm-mos SDK path (overrides discovery)
       --target <name>     c64 (default)
@@ -81,6 +81,10 @@ private fun parseArgs(args: Array<String>): Options? {
 }
 
 private fun run(opts: Options): Int {
+    if (opts.target != "c64") {
+        System.err.println("error: only c64 target supported")
+        return 1
+    }
     if (opts.inputs.isEmpty()) {
         System.err.println("error: no input files")
         System.err.println(USAGE)
@@ -121,14 +125,24 @@ private fun run(opts: Options): Int {
         try {
             linker.validate(ll)
         } catch (e: IllegalStateException) {
+            workDir.deleteRecursively()
             System.err.println(e.message)
+            return 1
+        } catch (e: IOException) {
+            workDir.deleteRecursively()
+            System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
             return 1
         }
     }
     try {
         linker.link(llFiles, output, workDir)
     } catch (e: IllegalStateException) {
+        workDir.deleteRecursively()
         System.err.println(e.message)
+        return 1
+    } catch (e: IOException) {
+        workDir.deleteRecursively()
+        System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
         return 1
     }
     if (opts.keepIr || opts.debug) {

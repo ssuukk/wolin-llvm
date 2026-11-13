@@ -71,7 +71,7 @@ object SdkLocator {
         val files = root.toFile().listFiles { f -> f.isDirectory && f.name.startsWith(GLOB_PREFIX) }
         if (files == null) return emptyList()
         val dirs: List<Path> = files.map { f: File -> f.toPath() }
-        return dirs.sortedWith(Comparator { a, b -> compareVersions(a, b) })
+        return dirs.sortedWith(Comparator { a, b -> compareVersions(b, a) })
     }
 
     /** Numeric version comparison: `v23.2.0` vs `v3.0`, group by group. */
