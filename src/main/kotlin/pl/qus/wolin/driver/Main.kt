@@ -100,49 +100,18 @@ private fun run(opts: Options): Int {
         System.err.println("error: ${e.message}")
         return 1
     }
-    val compiled = mutableListOf<CompiledFile>()
-    for (input in opts.inputs) {
-        val file = compileFile(input)
-        if (file == null) return 1
-        compiled += file
-    }
     val output = (opts.output ?: defaultOutput(opts.inputs.first())).toAbsolutePath()
     output.parent?.let { Files.createDirectories(it) }
     val outDir = output.parent ?: Path.of(".")
-    val workDir = if (opts.emitIr) outDir else Files.createTempDirectory("wolinc")
-    val llFiles = mutableListOf<Path>()
-    for (file in compiled) {
-        val ll = workDir.resolve("${file.mangledPrefix}.ll")
-        Files.writeString(ll, file.moduleIr)
-        llFiles.add(ll)
+    if (opts.emitIr) {
+        val compiled = compileFiles(opts.inputs) ?: return 1
+        writeIrFiles(compiled, outDir)
+        return 0
     }
-    val driverLl = workDir.resolve("driver.ll")
-    Files.writeString(driverLl, DriverModule(IrBuilder()).emit(compiled))
-        llFiles.add(driverLl)
-    if (opts.emitIr) return 0
-    val linker = Linker(sdk)
-    for (ll in llFiles) {
-        try {
-            linker.validate(ll)
-        } catch (e: IllegalStateException) {
-            workDir.deleteRecursively()
-            System.err.println(e.message)
-            return 1
-        } catch (e: IOException) {
-            workDir.deleteRecursively()
-            System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
-            return 1
-        }
-    }
-    try {
-        linker.link(llFiles, output, workDir)
-    } catch (e: IllegalStateException) {
+    val workDir = Files.createTempDirectory("wolinc")
+    val llFiles = compileToPrgFile(opts.inputs, output, sdk, workDir)
+    if (llFiles == null) {
         workDir.deleteRecursively()
-        System.err.println(e.message)
-        return 1
-    } catch (e: IOException) {
-        workDir.deleteRecursively()
-        System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
         return 1
     }
     if (opts.keepIr || opts.debug) {
@@ -154,6 +123,73 @@ private fun run(opts: Options): Int {
         workDir.deleteRecursively()
     }
     return 0
+}
+
+/**
+ * The compile pipeline, callable in-process: compiles [inputs], emits one LLVM
+ * IR module per file plus the driver module, validates every module and links
+ * them into [output]. The `.ll` files are written to [workDir].
+ *
+ * Returns the `.ll` files on success. On failure it returns null after
+ * printing the diagnostic to stderr.
+ */
+internal fun compileToPrgFile(
+    inputs: List<Path>,
+    output: Path,
+    sdk: Sdk,
+    workDir: Path,
+): List<Path>? {
+    val compiled = compileFiles(inputs) ?: return null
+    val llFiles = writeIrFiles(compiled, workDir)
+    val linker = Linker(sdk)
+    for (ll in llFiles) {
+        try {
+            linker.validate(ll)
+        } catch (e: IllegalStateException) {
+            System.err.println(e.message)
+            return null
+        } catch (e: IOException) {
+            System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
+            return null
+        }
+    }
+    try {
+        linker.link(llFiles, output, workDir)
+    } catch (e: IllegalStateException) {
+        System.err.println(e.message)
+        return null
+    } catch (e: IOException) {
+        System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
+        return null
+    }
+    return llFiles
+}
+
+/** Compiles every input file to an IR module. Null on failure. */
+private fun compileFiles(inputs: List<Path>): List<CompiledFile>? {
+    val compiled = mutableListOf<CompiledFile>()
+    for (input in inputs) {
+        val file = compileFile(input) ?: return null
+        compiled += file
+    }
+    return compiled
+}
+
+/**
+ * Writes each compiled module's `.ll` file plus the driver module into [dir].
+ * Returns the files written, the driver module last.
+ */
+private fun writeIrFiles(compiled: List<CompiledFile>, dir: Path): List<Path> {
+    val llFiles = mutableListOf<Path>()
+    for (file in compiled) {
+        val ll = dir.resolve("${file.mangledPrefix}.ll")
+        Files.writeString(ll, file.moduleIr)
+        llFiles.add(ll)
+    }
+    val driverLl = dir.resolve("driver.ll")
+    Files.writeString(driverLl, DriverModule(IrBuilder()).emit(compiled))
+    llFiles.add(driverLl)
+    return llFiles
 }
 
 /** One file, in-process: read, parse, build the AST, type-check, emit IR. */
