@@ -1003,8 +1003,8 @@ Emits the register accessors, the ROM-call mechanism and the interrupt form. Eve
 - Produces:
   - `object CpuAccessors` with:
     - `fun readA(b: IrBuilder): IrValue` — creates its scratch slot via `b.alloca(IrType.I8)`, emits `ldy #0` + `sta ($0),y` with the slot as the `"r"` pointer operand, then loads from the slot. **Touches no flag.** The accessor assumes the current block is the function's `entry` block (the slot is an `alloca`).
-    - `fun readAValue(b: IrBuilder): IrValue` — emits `pha\npla` with constraint `"=a,a"`. Clobbers N and Z.
-    - `fun readFlag(b: IrBuilder, mask: Int): IrValue` — emits the status-preserving sequence with constraint `"=x,x"`.
+    - `fun readAValue(b: IrBuilder): IrValue` — emits `pha\npla` with constraint `"=a"` (output-only, no operand). Clobbers N and Z.
+    - `fun readFlag(b: IrBuilder, mask: Int): IrValue` — emits the status-preserving sequence with constraint `"=x"` (output-only, no operand).
     - `fun writeRegister(b: IrBuilder, reg: String, value: IrValue)` — emits an empty `asm sideeffect ""` with an input constraint `"a"`/`"x"`/`"y"`.
     - `fun readAxLow(b: IrBuilder): IrValue`, `fun readAxHigh(b: IrBuilder): IrValue`.
   - `class ExternalCalls { fun emitCall(b: IrBuilder, target: Int, args: List<Pair<IrValue, String>>) }` — `args` pairs each argument value with its CPU register name.
@@ -1033,7 +1033,7 @@ class CpuAccessorTest {
         b.endFunction()
         val ir = b.render()
         for (op in listOf("php", "pha", "pla", "tax", "plp")) assertTrue(ir.contains(op), "$op missing in:\n$ir")
-        assertTrue(ir.contains("\"=x,x\""))
+        assertTrue(ir.contains("\"=x\"()"))
         // the backend rejects clobber lists
         assertFalse(ir.contains(": \"memory\""), "no clobber list may be emitted:\n$ir")
     }
@@ -1055,6 +1055,8 @@ class ExternalCallTest {
         ExternalCalls().emitCall(b, 0xffba, listOf(
             IrValue("%a", IrType.I8) to "CPU.A",
             IrValue("%y", IrType.I8) to "CPU.Y",
+            IrValue("%x", IrType.I8) to "CPU.X",
+        ))
         b.ret(null)
         b.endFunction()
         val ir = b.render()
@@ -1092,7 +1094,7 @@ The constraint string is just `"r"` — **the backend rejects a clobber list**
 here. Adding `"a", "y", "memory"` produces `error: expected instruction
 opcode`. A `memory` clobber is not expressible in this backend's inline asm.
 
-**`readAValue`** — `pha\npla` with `"=a,a"`.
+**`readAValue`** — `pha\npla` with `"=a"` (output-only, no operand).
 
 **`readFlag(mask)`** — the status-preserving sequence:
 
@@ -1107,7 +1109,7 @@ tax
 pla
 plp
 ```
-with `"=x,x"`. The number of `lsr` instructions is the **bit position** of the mask (`mask.trailingZeros()`; the mask is a single bit) — for mask `1` (carry) none, for `2` (zero) one, for `128` (negative) seven. The `lsr` count normalises the bit to position 0 so the result is `0` or `1`.
+with `"=x"` (output-only, no operand). The number of `lsr` instructions is the **bit position** of the mask (`mask.trailingZeros()`; the mask is a single bit) — for mask `1` (carry) none, for `2` (zero) one, for `128` (negative) seven. The `lsr` count normalises the bit to position 0 so the result is `0` or `1`.
 
 **`writeRegister`** — an empty template with an input constraint:
 
@@ -1115,13 +1117,25 @@ with `"=x,x"`. The number of `lsr` instructions is the **bit position** of the m
 call void asm sideeffect "", "a"(i8 %v)
 ```
 
-**`readAxLow`** — `pha\npla` with `"=a,a"`.
+**`readAxLow`** — `pha\npla` with `"=a"` (output-only, no operand).
 
-**`readAxHigh`** — `pha\ntxa\ntax\npla` with `"=x,x"`.
+**`readAxHigh`** — `pha\ntxa\ntax\npla` with `"=x"` (output-only, no operand).
 
 **No clobber lists.** The MOS backend rejects them: an `asm` with a clobber
 list fails with `error: expected instruction opcode`. The constraints alone
 carry the register requirements.
+
+**Empty-operand input constraints are invalid IR.** An input constraint
+requires a matching parameter — upstream LLVM `InlineAsm::verify` rejects
+`"=a,a"()` with `error: number of input constraints does not match number of
+parameters`. The pure reads are therefore **output-only** (`"=a"` / `"=x"`,
+no operand). Verified against the real backend on 2026-11-13
+(`.superpowers/sdd/2026-11-08-wolin-llvm-implementation/task-5-report.md`):
+no prologue is emitted and the live register value is returned; consecutive
+same-register output asms compile (the backend parks the first result in a
+scratch reg); a void-return asm with an output constraint followed by another
+same-register output asm fails with `could not allocate output register` —
+keep reads returning the value and writes taking input constraints.
 
 - [ ] **Step 4: Write `ExternalCalls.kt`**
 
