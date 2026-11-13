@@ -1,6 +1,7 @@
 package pl.qus.wolin.test
 
 import java.io.IOException
+import java.net.ServerSocket
 import java.net.Socket
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
@@ -19,10 +20,15 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
      * (inclusive). Byte `i` of the result is memory `readStart + i`.
      */
     fun run(prg: Path, readStart: Int, readEnd: Int): ByteArray {
+        // Each emulator gets its own monitor port: a fixed port makes two
+        // concurrent runs fight over the listener, and the loser then reads
+        // the *other* program's memory.
+        val port = freePort()
         val process = ProcessBuilder(
             vicePath,
             "-default",
             "-binarymonitor",
+            "-binarymonitoraddress", "$HOST:$port",
             "-limitcycles", "0",
             "-warp",
             "-autostart", prg.toString(),
@@ -30,9 +36,9 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
         try {
-            awaitMonitor(process)
+            awaitMonitor(process, port)
             Thread.sleep(RUN_SETTLE_MILLIS)
-            val monitor = ViceMonitor(HOST, PORT)
+            val monitor = ViceMonitor(HOST, port)
             val body = try {
                 monitor.memGet(readStart, readEnd)
             } finally {
@@ -45,10 +51,17 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
     }
 
     /**
+     * Picks a port the OS is not currently using. VICE binds it a moment
+     * later, so there is a small race window; in practice the ephemeral port
+     * range is wide enough for the handful of emulators a suite runs.
+     */
+    private fun freePort(): Int = ServerSocket(0).use { it.localPort }
+
+    /**
      * Waits until the binary monitor accepts a connection, or the process dies,
      * or [MONITOR_TIMEOUT_MILLIS] passes.
      */
-    private fun awaitMonitor(process: Process) {
+    private fun awaitMonitor(process: Process, port: Int) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(MONITOR_TIMEOUT_MILLIS)
         while (System.nanoTime() < deadline) {
             if (!process.isAlive) {
@@ -57,13 +70,13 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
             try {
                 // The monitor serves one client at a time: this probe connection
                 // is closed again before the real one is opened.
-                Socket(HOST, PORT).use { }
+                Socket(HOST, port).use { }
                 return
             } catch (e: IOException) {
                 Thread.sleep(POLL_INTERVAL_MILLIS)
             }
         }
-        throw IOException("VICE binary monitor did not open $HOST:$PORT within $MONITOR_TIMEOUT_MILLIS ms")
+        throw IOException("VICE binary monitor did not open $HOST:$port within $MONITOR_TIMEOUT_MILLIS ms")
     }
 
     /**
@@ -94,7 +107,6 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
 
     private companion object {
         const val HOST = "127.0.0.1"
-        const val PORT = 6502
         const val MONITOR_TIMEOUT_MILLIS = 40_000L
         const val RUN_SETTLE_MILLIS = 2_500L
         const val POLL_INTERVAL_MILLIS = 250L
