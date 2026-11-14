@@ -1,6 +1,7 @@
 package pl.qus.wolin.ir
 
 import pl.qus.wolin.ast.BoolLit
+import pl.qus.wolin.ast.CpuRegister
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FixedAddress
 import pl.qus.wolin.ast.FixedArray
@@ -37,10 +38,20 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
         var functions = 0
         for (fn in program.functions) {
             val params = fn.params.map { IrValue("%${it.name}", TypeMapper.ir(it.type)) }
+            val fixed = fn.fixedAddress
+            if (fixed != null) {
+                // A fixed-address function is a DECLARATION: the address
+                // already belongs to something else — a KERNAL routine, for
+                // instance. The spec emits it as a function whose body is the
+                // ROM call, so a call site stays an ordinary call.
+                emitFixedFunction(fn, fixed, params, mangledPrefix)
+                continue
+            }
             b.startFunction(
                 "$mangledPrefix.${fn.name}",
                 TypeMapper.ir(fn.retType ?: Types.unit),
-                params
+                params,
+                attributes = if (fn.isInterrupt) listOf("interrupt") else emptyList(),
             )
             stmt.startFunction(mangledPrefix, params, program.globals, fn)
             b.endFunction()
@@ -88,6 +99,42 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             else -> throw error("Unsupported location $location")
         }
         return "@\"$prefix.${g.name}\" = global $ptrTy inttoptr (i64 $address to $ptrTy)"
+    }
+
+    /**
+     * A fixed-address function declaration.
+     *
+     * The spec emits it as a function whose body is the ROM call:
+     *
+     * ```
+     * define void @chrout(i8 %c) {
+     *   call void asm sideeffect "jsr $$ffd2", "a"(i8 %c)
+     *   ret void
+     * }
+     * ```
+     *
+     * Each parameter's `^CPU.X` annotation says which register the argument
+     * arrives in, and the constraint list follows the declaration order.
+     */
+    private fun emitFixedFunction(
+        fn: pl.qus.wolin.ast.FunDecl,
+        address: Int,
+        params: List<IrValue>,
+        prefix: String,
+    ) {
+        b.startFunction(
+            "$prefix.${fn.name}",
+            TypeMapper.ir(fn.retType ?: Types.unit),
+            params,
+        )
+        val args = fn.params.mapIndexed { index, param ->
+            val register = (param.location as? CpuRegister)?.name
+                ?: throw error("Fixed address function ${fn.name} needs a CPU register parameter")
+            params[index] to register
+        }
+        ExternalCalls().emitCall(b, address, args)
+        b.ret(null)
+        b.endFunction()
     }
 
     /** The typed-pointer spelling of a type: `i8*`, `i16*`, … */

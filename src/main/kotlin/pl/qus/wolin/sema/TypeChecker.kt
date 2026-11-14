@@ -202,7 +202,7 @@ class TypeChecker {
         is UnaryOp -> checkUnary(expr, expected)
         is BinaryOp -> checkBinary(expr)
         is Assign -> checkAssign(expr)
-        is Call -> checkCall(expr)
+        is Call -> checkCall(expr, expected)
         is FunctionLit -> checkFunctionLiteral(expr)
         is IfExpr -> checkIfExpr(expr, expected)
         is ArrayAccess -> checkArrayAccess(expr)
@@ -417,22 +417,42 @@ class TypeChecker {
         }
     }
 
-    private fun checkCall(expr: Call): WolinType {
+    private fun checkCall(expr: Call, expected: WolinType?): WolinType {
         val callee = expr.callee
         if (callee !is VarRef) {
             throw SemaException("Unsupported call target")
         }
         val symbol = scope.lookup(callee.name)
             ?: throw SemaException("Unknown function ${callee.name}")
-        val function = symbol as? Symbol.FunSymbol
-            ?: throw SemaException("${callee.name} is not a function")
-        resolved[callee] = symbol
-        callee.type = functionTypeOf(function.decl)
+        when (symbol) {
+            is Symbol.FunSymbol -> {
+                resolved[callee] = symbol
+                callee.type = functionTypeOf(symbol.decl)
+                checkCallArgs(expr, callee.name, symbol.decl.params)
+                expr.type = symbol.decl.retType ?: Types.unit
+                return expr.type
+            }
+            // A `uword` holds a 16-bit code address; calling through it is an
+            // indirect call. The signature is not known here, so the result
+            // type is inferred from the expected type, and the arguments are
+            // checked only for well-formedness.
+            is Symbol.DataSymbol -> {
+                if (symbol.type.kind != TypeKind.UWORD) {
+                    throw SemaException("${callee.name} not function")
+                }
+                resolved[callee] = symbol
+                callee.type = symbol.type
+                expr.args.forEach { checkExpr(it, null) }
+                expr.type = expected ?: Types.ubyte
+                return expr.type
+            }
+        }
+    }
 
-        val params = function.decl.params
+    private fun checkCallArgs(expr: Call, name: String, params: List<Param>) {
         if (params.size != expr.args.size) {
             throw SemaException(
-                "Function ${callee.name} expects ${params.size} arguments but got ${expr.args.size}"
+                "Function $name expects ${params.size} arguments but got ${expr.args.size}"
             )
         }
         expr.args.forEachIndexed { index, argument ->
@@ -441,9 +461,6 @@ class TypeChecker {
                 throw SemaException("Attempt reassign ${params[index].type} $argumentType")
             }
         }
-
-        expr.type = function.decl.retType ?: Types.unit
-        return expr.type
     }
 
     private fun checkFunctionLiteral(expr: FunctionLit): WolinType {

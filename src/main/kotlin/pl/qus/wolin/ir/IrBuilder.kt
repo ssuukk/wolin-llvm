@@ -31,6 +31,8 @@ class IrBuilder {
         val retType: IrType,
         val params: List<IrValue>,
         val linkage: String?,
+        /** The function's attribute group, e.g. `["interrupt"]`. */
+        val attributes: List<String>,
     ) {
         val blocks = mutableListOf<Block>()
         val usedLabels = mutableSetOf<String>()
@@ -69,9 +71,10 @@ class IrBuilder {
         retType: IrType,
         params: List<IrValue> = emptyList(),
         linkage: String? = null,
+        attributes: List<String> = emptyList(),
     ) {
         check(open == null) { "function ${open?.name} is still open" }
-        val fn = Function(name, retType, params, linkage)
+        val fn = Function(name, retType, params, linkage, attributes)
         fn.blocks += Block("entry")
         fn.usedLabels += "entry"
         functions += fn
@@ -219,7 +222,12 @@ class IrBuilder {
             out.append(fn.retType.llvmName()).append(' ')
             out.append(renderTarget(fn.name)).append('(')
             out.append(fn.params.joinToString(", ") { "${it.type.llvmName()} ${it.name}" })
-            out.append(") {\n")
+            out.append(')')
+            // A function with an attribute group names it after the parameter
+            // list: `define void @"f"() #0 {`. The group itself is emitted
+            // after the closing brace.
+            if (fn.attributes.isNotEmpty()) out.append(" #0")
+            out.append(" {\n")
             for (block in fn.blocks) {
                 out.append(block.label).append(":\n")
                 for (line in block.phis + block.instructions) {
@@ -230,6 +238,11 @@ class IrBuilder {
                 out.append("  ").append(terminator).append('\n')
             }
             out.append("}\n")
+            if (fn.attributes.isNotEmpty()) {
+                out.append("attributes #0 = { ")
+                out.append(fn.attributes.joinToString(", ") { "\"$it\"" })
+                out.append(" }\n")
+            }
         }
         return out.toString()
     }

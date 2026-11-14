@@ -447,8 +447,14 @@ class ExprEmitter(
         val retType = TypeMapper.ir(e.type)
         return when (val symbol = resolved[callee]) {
             is Symbol.FunSymbol -> b.call(retType, "$prefix.${symbol.decl.name}", args)
-            // A function-typed variable is called through its pointer.
-            else -> b.call(retType, emit(callee).name, args)
+            // A `uword` holding a function address is called through
+            // `inttoptr` — the address is a plain 16-bit number, so it is
+            // converted back to a pointer before the call.
+            else -> {
+                val address = emit(callee)
+                val pointer = b.instr(IrType.Ptr, "inttoptr ${address.type.llvmName()} ${address.name} to i8*")
+                b.call(retType, pointer.name, args)
+            }
         }
     }
 

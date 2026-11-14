@@ -38,3 +38,27 @@ fun runProgram(source: String): ByteArray {
     val prg = compileToPrg(source, "t")
     return ViceRunner().run(prg, 0x0400, 0x040F)
 }
+
+/**
+ * Compile [source] and return the IR text of the file's module.
+ *
+ * The driver module is not included: the test is about the file's own
+ * functions.
+ */
+fun emitIr(source: String): String {
+    val dir = Files.createTempDirectory("wolinc-ir")
+    val input = dir.resolve("t.wtk")
+    input.writeText(source)
+    val sdk = SdkLocator.locate(
+        env = System.getenv(),
+        globRoots = listOf(Path.of(System.getProperty("user.home"), ".local/share/rust-mos")),
+    )
+    val workDir = Files.createTempDirectory("wolinc-it-ir")
+    try {
+        val llFiles = compileToPrgFile(listOf(input), dir.resolve("t.prg").toAbsolutePath(), sdk, workDir)
+            ?: error("wolinc failed to compile the source")
+        return llFiles.first().toFile().readText()
+    } finally {
+        workDir.toFile().deleteRecursively()
+    }
+}
