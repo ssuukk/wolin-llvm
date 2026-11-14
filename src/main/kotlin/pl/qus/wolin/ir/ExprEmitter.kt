@@ -311,7 +311,7 @@ class ExprEmitter(
 
             is ArrayAccess -> {
                 val ety = TypeMapper.ir(a.type)
-                val base = emit(target.array)
+                val base = emitArrayBase(target.array)
                 val idx = promoteIndex(emit(target.index), target.index.type)
                 val p = b.instr(IrType.Ptr, "getelementptr ${ety.llvmName()}, ptr ${base.name}, i16 ${idx.name}")
                 val v = widenIfNeeded(emit(a.value), a)
@@ -401,10 +401,28 @@ class ExprEmitter(
 
     private fun emitArrayAccess(a: ArrayAccess): IrValue {
         val ety = TypeMapper.ir(a.type)
-        val base = emit(a.array)
+        val base = emitArrayBase(a.array)
         val idx = promoteIndex(emit(a.index), a.index.type)
         val p = b.instr(IrType.Ptr, "getelementptr ${ety.llvmName()}, ptr ${base.name}, i16 ${idx.name}")
         return b.instr(ety, "load ${ety.llvmName()}, ptr ${p.name}")
+    }
+
+    /**
+     * The base pointer of an indexed access.
+     *
+     * An addressed local — a `string` or an array — keeps its *pointer* in an
+     * `alloca` slot, so the GEP must run on the pointer loaded out of the
+     * slot, not on the slot itself. A fixed-address variable is already a
+     * pointer to the data, and a string literal is a pointer to its first
+     * character, so both are used as they are.
+     */
+    private fun emitArrayBase(array: Expr): IrValue {
+        val slot = (array as? VarRef)?.let { stmt.vars.lookup(it.name) }
+        if (slot is VarStorage.Local) {
+            // The slot holds the pointer, so the GEP runs on the loaded value.
+            return b.instr(IrType.Ptr, "load ptr, ptr ${slot.ptr.name}")
+        }
+        return emit(array)
     }
 
     /**

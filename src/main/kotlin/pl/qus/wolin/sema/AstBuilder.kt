@@ -542,12 +542,47 @@ class AstBuilder {
         return body.firstOrNull()?.code ?: throw SemaException("Unsupported character literal $text")
     }
 
+    /**
+     * The bytes of a string literal, with the backslash escapes decoded.
+     *
+     * The standard Kotlin escapes are decoded into single bytes: `\n`, `\t`,
+     * `\r`, `\0`, `\\`, `\"`, `\'` and `\uXXXX`. The decoded bytes are what
+     * the IR constant spells, so the emitter never sees a backslash.
+     */
     private fun stringBytes(text: String): ByteArray {
         val body = when {
             text.startsWith("\"\"\"") -> text.removePrefix("\"\"\"").removeSuffix("\"\"\"")
             else -> text.removePrefix("\"").removeSuffix("\"")
         }
-        return body.toByteArray(Charsets.ISO_8859_1)
+        val out = ArrayList<Byte>(body.length)
+        var i = 0
+        while (i < body.length) {
+            val c = body[i]
+            if (c != '\\' || i + 1 >= body.length) {
+                out += c.code.toByte()
+                i++
+                continue
+            }
+            when (val e = body[i + 1]) {
+                'n' -> out += 0x0A.toByte()
+                't' -> out += 0x09.toByte()
+                'r' -> out += 0x0D.toByte()
+                '0' -> out += 0x00.toByte()
+                '\\' -> out += '\\'.code.toByte()
+                '"' -> out += '"'.code.toByte()
+                '\'' -> out += '\''.code.toByte()
+                'u' -> {
+                    val hex = body.substring(i + 2, minOf(i + 6, body.length))
+                    val code = hex.toIntOrNull(16)
+                        ?: throw SemaException("Unsupported escape \\u$hex in string literal")
+                    out += code.toByte()
+                    i += 4
+                }
+                else -> throw SemaException("Unsupported escape \\$e in string literal")
+            }
+            i += 2
+        }
+        return out.toByteArray()
     }
 
     // ---- helpers ----------------------------------------------------------
