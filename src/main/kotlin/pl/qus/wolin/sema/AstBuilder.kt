@@ -368,11 +368,12 @@ class AstBuilder {
         if (ctx.THROW() != null) unsupported("throw expression")
         val value = ctx.expression()?.let { buildExpression(it) }
         val stmt = when {
-            ctx.RETURN() != null || ctx.RETURN_AT() != null -> ReturnStmt(value)
-            ctx.BREAK() != null || ctx.BREAK_AT() != null ->
-                BreakStmt(ctx.BREAK_AT()?.text?.removePrefix("break@"))
-            ctx.CONTINUE() != null || ctx.CONTINUE_AT() != null ->
-                ContinueStmt(ctx.CONTINUE_AT()?.text?.removePrefix("continue@"))
+            ctx.RETURN_AT() != null -> unsupported("return@<label>")
+            ctx.BREAK_AT() != null -> unsupported("break@<label>")
+            ctx.CONTINUE_AT() != null -> unsupported("continue@<label>")
+            ctx.RETURN() != null -> ReturnStmt(value)
+            ctx.BREAK() != null -> BreakStmt(null)
+            ctx.CONTINUE() != null -> ContinueStmt(null)
             else -> unsupported("jump expression")
         }
         throw StmtSignal(stmt)
@@ -558,6 +559,9 @@ class AstBuilder {
         var i = 0
         while (i < body.length) {
             val c = body[i]
+            if (c == '$' && i + 1 < body.length && body[i + 1] == '{') {
+                unsupported("string interpolation")
+            }
             if (c != '\\' || i + 1 >= body.length) {
                 out += c.code.toByte()
                 i++
