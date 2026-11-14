@@ -237,8 +237,10 @@ class AstBuilder {
             val label = operation.labelDefinition()?.text
             if (label != null) {
                 if (label == "return@") {
-                    recordReturnAt(result)
-                    throw StmtSignal(ReturnStmt(null))
+                    val address = (result as? IntLit)?.value
+                        ?: unsupported("return@<label>")
+                    returnAtSink?.add(ReturnAt(address.toInt()))
+                    throw StmtSignal(ReturnAtStmt(address.toInt()))
                 }
                 unsupported("label '$label'")
             }
@@ -413,11 +415,6 @@ class AstBuilder {
         ctx.BinLiteral()?.let { return IntLit(integerValue(it.text), Types.unit) }
         ctx.LongLiteral()?.let { return IntLit(integerValue(it.text.removeSuffix("L")), Types.unit) }
         unsupported("literal")
-    }
-
-    private fun recordReturnAt(expr: Expr) {
-        val address = (expr as? IntLit)?.value ?: return
-        returnAtSink?.add(ReturnAt(address.toInt()))
     }
 
     // ---- types ------------------------------------------------------------

@@ -24,3 +24,8 @@ when.end:
   %v5 = load i8, ptr %v0
   ret i8 %v5
 }
+
+define void @__wolin_init_file_t() {
+entry:
+  ret void
+}

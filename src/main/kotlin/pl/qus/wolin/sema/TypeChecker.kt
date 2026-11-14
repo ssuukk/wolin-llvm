@@ -2,6 +2,7 @@ package pl.qus.wolin.sema
 
 import pl.qus.wolin.ast.*
 import java.util.IdentityHashMap
+import java.util.LinkedHashMap
 
 /**
  * Walks the typed AST and enforces the type rules.
@@ -28,7 +29,13 @@ class TypeChecker {
         // Functions are visible everywhere, so they are declared before anything
         // is checked — a call may name a function declared further down.
         file.functions.forEach { fn -> globals.declare(fn.name, Symbol.FunSymbol(fn)) }
-        file.globals.forEach { global -> checkGlobal(global) }
+        // The constant value of every global checked so far: a global's
+        // initialiser may reference only globals declared before it.
+        val constSoFar = LinkedHashMap<String, ConstValue>()
+        val functionNames = file.functions.map { it.name }.toSet()
+        file.globals.forEachIndexed { index, global ->
+            checkGlobal(global, file, index, constSoFar, functionNames)
+        }
         file.functions.forEach { fn -> checkFunction(fn, globals) }
 
         return file.copy(resolved = resolved)
@@ -36,16 +43,82 @@ class TypeChecker {
 
     // ---- declarations -----------------------------------------------------
 
-    private fun checkGlobal(global: GlobalDecl) {
+    private fun checkGlobal(
+        global: GlobalDecl,
+        file: Ast.Program,
+        index: Int,
+        constSoFar: MutableMap<String, ConstValue>,
+        functionNames: Set<String>,
+    ) {
         val declared = global.declaredType
-        val initType = global.init?.let { checkExpr(it, declared) }
+        val init = global.init
+        if (init != null) {
+            // The ordering error must beat the plain "unknown variable" the
+            // reference check below would report for the same name.
+            val laterNames = file.globals.drop(index + 1).map { it.name }.toSet()
+            varRefs(init).firstOrNull { it.name in laterNames }?.let {
+                throw SemaException("initialiser references a global that is not yet initialised")
+            }
+        }
+        val initType = init?.let { checkExpr(it, declared) }
         if (declared != null && initType != null && initType.kind != declared.kind) {
             throw SemaException("Attempt reassign $declared $initType")
         }
         val type = declared ?: initType
             ?: throw SemaException("Variable ${global.name} has no type!")
         global.type = type
+        if (init != null) {
+            global.constValue = ConstFolder.fold(init, constSoFar, functionNames)
+                ?: throw SemaException("global initialiser must be a constant expression")
+        }
         scope.declare(global.name, Symbol.DataSymbol(type, global.location, global.init, global.isVal))
+        val constValue = global.constValue
+        if (constValue != null) constSoFar[global.name] = constValue
+    }
+
+    /** Every variable reference in [expr], in source order. */
+    private fun varRefs(expr: Expr, out: MutableList<VarRef> = mutableListOf()): List<VarRef> {
+        when (expr) {
+            is VarRef -> out += expr
+            is UnaryOp -> varRefs(expr.operand, out)
+            is BinaryOp -> { varRefs(expr.left, out); varRefs(expr.right, out) }
+            is Call -> { varRefs(expr.callee, out); expr.args.forEach { varRefs(it, out) } }
+            is ArrayAccess -> { varRefs(expr.array, out); varRefs(expr.index, out) }
+            is Assign -> { varRefs(expr.target, out); varRefs(expr.value, out) }
+            is IfExpr -> {
+                varRefs(expr.cond, out)
+                expr.then.forEach { walkStmtVarRefs(it, out) }
+                expr.otherwise.forEach { walkStmtVarRefs(it, out) }
+            }
+            else -> Unit
+        }
+        return out
+    }
+
+    private fun walkStmtVarRefs(stmt: Stmt, out: MutableList<VarRef>) {
+        when (stmt) {
+            is LocalDecl -> stmt.init?.let { varRefs(it, out) }
+            is ExprStmt -> varRefs(stmt.expr, out)
+            is BlockStmt -> stmt.body.forEach { walkStmtVarRefs(it, out) }
+            is IfStmt -> {
+                varRefs(stmt.cond, out)
+                stmt.then.forEach { walkStmtVarRefs(it, out) }
+                stmt.otherwise.forEach { walkStmtVarRefs(it, out) }
+            }
+            is WhileStmt -> {
+                varRefs(stmt.cond, out)
+                stmt.body.forEach { walkStmtVarRefs(it, out) }
+            }
+            is ReturnStmt -> stmt.value?.let { varRefs(it, out) }
+            is WhenStmt -> {
+                stmt.subject?.let { varRefs(it, out) }
+                stmt.entries.forEach { entry ->
+                    entry.conditions.forEach { varRefs(it, out) }
+                    entry.body.forEach { walkStmtVarRefs(it, out) }
+                }
+            }
+            else -> Unit
+        }
     }
 
     private fun checkFunction(fn: FunDecl, globals: Scope) {
@@ -126,6 +199,7 @@ class TypeChecker {
             is WhenStmt -> checkWhen(stmt)
             is WhenEntry -> throw SemaException("A when entry cannot appear outside a when")
 
+            is ReturnAtStmt -> Unit
             is BreakStmt, is ContinueStmt -> Unit
         }
     }

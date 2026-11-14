@@ -40,6 +40,18 @@ fun runProgram(source: String): ByteArray {
 }
 
 /**
+ * Compile [source] to a .prg, run it under VICE, and return $0800-$080F.
+ *
+ * The window outside the screen: the ROM's screen-init routine clears
+ * `$0400`, so a program that jumps into the ROM keeps its value only
+ * outside the screen area.
+ */
+fun runProgramAt0800(source: String): ByteArray {
+    val prg = compileToPrg(source, "t")
+    return ViceRunner().run(prg, 0x0800, 0x080F)
+}
+
+/**
  * Compile [source] and return the IR text of the file's module.
  *
  * The driver module is not included: the test is about the file's own

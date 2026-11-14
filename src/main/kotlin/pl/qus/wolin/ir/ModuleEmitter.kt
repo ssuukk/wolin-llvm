@@ -1,16 +1,11 @@
 package pl.qus.wolin.ir
 
-import pl.qus.wolin.ast.BoolLit
 import pl.qus.wolin.ast.CpuRegister
-import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FixedAddress
 import pl.qus.wolin.ast.FixedArray
 import pl.qus.wolin.ast.Location
 import pl.qus.wolin.ast.GlobalDecl
-import pl.qus.wolin.ast.IntLit
-import pl.qus.wolin.ast.NullLit
 import pl.qus.wolin.ast.Program
-import pl.qus.wolin.ast.RealLit
 import pl.qus.wolin.sema.TypeKind
 import pl.qus.wolin.sema.Types
 import pl.qus.wolin.sema.WolinType
@@ -27,6 +22,10 @@ import pl.qus.wolin.sema.WolinType
  */
 class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
 
+    /** The name of the file's init function, set by [emitFile]. */
+    var initFnName: String? = null
+        private set
+
     /** Emits [program] with names mangled as `<mangledPrefix>.<symbol>`. */
     fun emitFile(program: Program, mangledPrefix: String): String {
         val constants = mutableListOf<String>()
@@ -35,7 +34,6 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
 
         emitGlobals(program, mangledPrefix, constants)
 
-        var functions = 0
         for (fn in program.functions) {
             val params = fn.params.map { IrValue("%${it.name}", TypeMapper.ir(it.type)) }
             val fixed = fn.fixedAddress
@@ -55,12 +53,16 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             )
             stmt.startFunction(mangledPrefix, params, program.globals, fn)
             b.endFunction()
-            functions++
         }
+
+        // The init function is emitted into the same builder, so it renders
+        // with the module; the driver calls it before main, even when it
+        // stores nothing.
+        initFnName = GlobalInitEmitter(b).emitFile(program, mangledPrefix)
 
         val sections = mutableListOf<String>()
         if (constants.isNotEmpty()) sections += constants.joinToString("\n")
-        if (functions > 0) sections += b.render()
+        sections += b.render()
         return "target triple = \"mos-c64\"\n\n" + sections.joinToString("\n\n")
     }
 
@@ -79,7 +81,14 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                     "@\"$prefix.${g.name}\" = global [${arrayCount(g.type)} x ${TypeMapper.ir(ety).llvmName()}] zeroinit"
                 continue
             }
-            val init = g.init?.let { constantSpelling(it, g.name) } ?: zeroFor(TypeMapper.ir(g.type))
+            // A pure-literal initialiser is static data; one that references
+            // something else (an earlier global, a function) cannot be a
+            // constant expression, so the global is zero-initialised and the
+            // file's init function stores the folded value before main.
+            val init = g.init?.let {
+                if (referencesAnotherEntity(it)) zeroFor(TypeMapper.ir(g.type))
+                else g.constValue!!.spelling
+            } ?: zeroFor(TypeMapper.ir(g.type))
             constants += "@\"$prefix.${g.name}\" = global ${TypeMapper.ir(g.type).llvmName()} $init"
         }
     }
@@ -151,15 +160,6 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
         TypeKind.UBYTE, TypeKind.BYTE -> 256
         TypeKind.UWORD, TypeKind.WORD -> 65536
         else -> throw error("Global array index must be an integer type")
-    }
-
-    /** The constant spelling of a global initialiser, per the checker's guarantee. */
-    private fun constantSpelling(init: Expr, name: String): String = when (init) {
-        is IntLit -> init.value.toString()
-        is RealLit -> init.value.toString()
-        is BoolLit -> init.value.toString()
-        is NullLit -> "null"
-        else -> throw error("Global $name needs a constant initialiser in v1")
     }
 
     /** The zero value of a type, for an uninitialised global. */

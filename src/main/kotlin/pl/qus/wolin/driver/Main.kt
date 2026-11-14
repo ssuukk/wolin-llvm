@@ -215,11 +215,12 @@ private fun compileFile(input: Path): CompiledFile? {
         System.err.println("error: ${e.message} (${input.fileName})")
         return null
     }
+    val moduleEmitter = ModuleEmitter()
     return CompiledFile(
         sourceName = input.fileName.toString(),
         mangledPrefix = prefix,
-        moduleIr = ModuleEmitter().emitFile(program, prefix),
-        initFnName = null,
+        moduleIr = moduleEmitter.emitFile(program, prefix),
+        initFnName = moduleEmitter.initFnName,
     )
 }
 

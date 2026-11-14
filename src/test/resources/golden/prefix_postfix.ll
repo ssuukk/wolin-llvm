@@ -24,3 +24,8 @@ entry:
   %v11 = add i8 %v9, %v10
   ret i8 %v11
 }
+
+define void @__wolin_init_file_t() {
+entry:
+  ret void
+}

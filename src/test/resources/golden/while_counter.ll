@@ -18,3 +18,8 @@ end:
   %v5 = load i16, ptr %v0
   ret i16 %v5
 }
+
+define void @__wolin_init_file_t() {
+entry:
+  ret void
+}

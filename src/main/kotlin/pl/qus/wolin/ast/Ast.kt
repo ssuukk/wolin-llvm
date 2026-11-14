@@ -1,5 +1,6 @@
 package pl.qus.wolin.ast
 
+import pl.qus.wolin.sema.ConstValue
 import pl.qus.wolin.sema.Symbol
 import pl.qus.wolin.sema.WolinType
 
@@ -37,7 +38,9 @@ sealed interface Ast {
         /** `val` declarations cannot be assigned to. */
         val isVal: Boolean = false,
         /** The type as written in the source, or null when there was none. */
-        val declaredType: WolinType? = null
+        val declaredType: WolinType? = null,
+        /** The constant the initialiser folds to; filled by the checker, null without an initialiser. */
+        var constValue: ConstValue? = null,
     ) : Ast
 
     data class FunDecl(
@@ -86,6 +89,12 @@ sealed interface Ast {
     data class BreakStmt(val label: String?) : Stmt
     data class ContinueStmt(val label: String?) : Stmt
     data class ReturnStmt(val value: Expr?) : Stmt
+    /**
+     * A `return@<address>` site. The address lives with the statement, so
+     * each site of a function carries its own target; the function-level
+     * [FunDecl.returnAt] list mirrors the same sites in source order.
+     */
+    data class ReturnAtStmt(val address: Int) : Stmt
     data class WhenEntry(val conditions: List<Expr>, val body: List<Stmt>, val isElse: Boolean) : Ast.Stmt
 
     /**
@@ -152,6 +161,7 @@ typealias WhileStmt = Ast.WhileStmt
 typealias BreakStmt = Ast.BreakStmt
 typealias ContinueStmt = Ast.ContinueStmt
 typealias ReturnStmt = Ast.ReturnStmt
+typealias ReturnAtStmt = Ast.ReturnAtStmt
 typealias BlockStmt = Ast.BlockStmt
 typealias IfExpr = Ast.IfExpr
 typealias ArrayAccess = Ast.ArrayAccess

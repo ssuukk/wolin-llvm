@@ -474,10 +474,15 @@ class ExprEmitter(
             val v2 = stmt.emitValue(e.otherwise)
             stmt.ensureTerminatedOr(endL)
             stmt.openReserved(endL)
-            if (e.type.kind != TypeKind.UNIT && v1 != null && v2 != null) {
-                return b.phi(TypeMapper.ir(e.type), listOf(v1 to thenL, v2 to elseL))
+            // A null side means that branch leaves through a terminator (a
+            // `return@` or a `break`): the value of the expression is the
+            // live side's, and no phi is needed.
+            return when {
+                e.type.kind == TypeKind.UNIT -> IrValue("", IrType.Void)
+                v1 == null -> v2 ?: IrValue("", IrType.Void)
+                v2 == null -> v1
+                else -> b.phi(TypeMapper.ir(e.type), listOf(v1 to thenL, v2 to elseL))
             }
-            return IrValue("", IrType.Void)
         }
         stmt.openReserved(endL)
         return IrValue("", IrType.Void)

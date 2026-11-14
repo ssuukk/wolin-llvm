@@ -195,6 +195,9 @@ class IrBuilder {
         )
     }
 
+    /** Terminates the current block as unreachable — no further code runs from it. */
+    fun unreachable() { terminate("unreachable") }
+
     /**
      * Emits a call whose result the caller does not use.
      *

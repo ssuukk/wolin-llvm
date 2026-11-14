@@ -16,6 +16,7 @@ import pl.qus.wolin.ast.GlobalDecl
 import pl.qus.wolin.ast.IfExpr
 import pl.qus.wolin.ast.IfStmt
 import pl.qus.wolin.ast.LocalDecl
+import pl.qus.wolin.ast.ReturnAtStmt
 import pl.qus.wolin.ast.ReturnStmt
 import pl.qus.wolin.ast.Stmt
 import pl.qus.wolin.ast.UnaryOp
@@ -93,6 +94,10 @@ class StmtEmitter(private val b: IrBuilder) {
 
     /** Emits one statement into the current block. */
     fun emit(s: Stmt) {
+        // A block that already carries its terminator cannot take more code:
+        // statements after a `return@` or a `break` are dead. They still parse
+        // and type-check; they are just not emitted.
+        if (terminated) return
         when (s) {
             is LocalDecl -> emitLocalDecl(s)
             is ExprStmt -> {
@@ -111,6 +116,10 @@ class StmtEmitter(private val b: IrBuilder) {
             is WhenStmt -> emitWhen(s)
             is ReturnStmt -> {
                 b.ret(s.value?.let { expr.emit(it) })
+                terminated = true
+            }
+            is ReturnAtStmt -> {
+                ReturnAtEmitter(b).emit(s.address)
                 terminated = true
             }
             is BreakStmt -> {
@@ -288,6 +297,10 @@ class StmtEmitter(private val b: IrBuilder) {
     fun emitValue(stmts: List<Stmt>): IrValue? {
         if (stmts.isEmpty()) return null
         stmts.dropLast(1).forEach { emit(it) }
+        // A terminator among the earlier statements makes the whole value
+        // position dead: the branch leaves through the jump, and nothing is
+        // emitted for the last expression.
+        if (terminated) return null
         return when (val last = stmts.last()) {
             is ExprStmt -> expr.emit(last.expr)
             is BlockStmt -> {
