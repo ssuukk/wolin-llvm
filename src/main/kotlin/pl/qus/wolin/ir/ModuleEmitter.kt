@@ -21,6 +21,7 @@ import pl.qus.wolin.ast.ReturnStmt
 import pl.qus.wolin.ast.Stmt
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
+import pl.qus.wolin.ast.WhenExpr
 import pl.qus.wolin.ast.WhenStmt
 import pl.qus.wolin.ast.WhileStmt
 import pl.qus.wolin.sema.Symbol
@@ -170,6 +171,13 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 collectVarRefs(expr.cond, out)
                 expr.then.forEach { collectStmtVarRefs(it, out) }
                 expr.otherwise.forEach { collectStmtVarRefs(it, out) }
+            }
+            is WhenExpr -> {
+                expr.subject?.let { collectVarRefs(it, out) }
+                expr.entries.forEach { entry ->
+                    entry.conditions.forEach { collectVarRefs(it, out) }
+                    entry.body.forEach { collectStmtVarRefs(it, out) }
+                }
             }
             else -> Unit
         }

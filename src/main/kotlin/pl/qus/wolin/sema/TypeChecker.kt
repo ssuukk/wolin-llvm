@@ -182,6 +182,13 @@ class TypeChecker {
                 expr.then.forEach { walkStmtVarRefs(it, out) }
                 expr.otherwise.forEach { walkStmtVarRefs(it, out) }
             }
+            is WhenExpr -> {
+                expr.subject?.let { varRefs(it, out) }
+                expr.entries.forEach { entry ->
+                    entry.conditions.forEach { varRefs(it, out) }
+                    entry.body.forEach { walkStmtVarRefs(it, out) }
+                }
+            }
             else -> Unit
         }
         return out
@@ -297,12 +304,39 @@ class TypeChecker {
     }
 
     private fun checkWhen(stmt: WhenStmt) {
-        val subjectType = stmt.subject?.let { checkExpr(it, null) }
+        checkWhenEntries(stmt.subject, stmt.entries) { entry -> checkBranch(entry.body, null) }
+    }
+
+    private fun checkWhenExpr(expr: WhenExpr, expected: WolinType?): WolinType {
+        val branchTypes = checkWhenEntries(expr.subject, expr.entries) { entry ->
+            checkBranch(entry.body, expected)
+        }
+        expr.type = if (branchTypes.all { it.kind == branchTypes.firstOrNull()?.kind }) {
+            branchTypes.firstOrNull() ?: Types.unit
+        } else {
+            Types.unit
+        }
+        return expr.type
+    }
+
+    /**
+     * Checks a `when`'s subject and entries: the subject's comparability, the
+     * else ordering, and each condition's type. [checkBranch] is called on
+     * every entry body and its result collected; the statement form discards
+     * them, the expression form unifies them into the value's type.
+     */
+    private fun checkWhenEntries(
+        subject: Expr?,
+        entries: List<WhenEntry>,
+        checkBranch: (WhenEntry) -> WolinType,
+    ): List<WolinType> {
+        val subjectType = subject?.let { checkExpr(it, null) }
         if (subjectType != null && (subjectType.kind == TypeKind.UNIT || subjectType.kind == TypeKind.STRING)) {
             throw SemaException("when subject must be comparable, not $subjectType")
         }
         var seenElse = false
-        stmt.entries.forEach { entry ->
+        val branchTypes = mutableListOf<WolinType>()
+        entries.forEach { entry ->
             if (entry.isElse) {
                 if (seenElse) throw SemaException("A when can have only one else branch")
                 seenElse = true
@@ -325,8 +359,9 @@ class TypeChecker {
                     }
                 }
             }
-            checkBranch(entry.body, null)
+            branchTypes += checkBranch(entry)
         }
+        return branchTypes
     }
 
     /**
@@ -371,6 +406,7 @@ class TypeChecker {
         is Call -> checkCall(expr, expected)
         is FunctionLit -> checkFunctionLiteral(expr, expected)
         is IfExpr -> checkIfExpr(expr, expected)
+        is WhenExpr -> checkWhenExpr(expr, expected)
         is ArrayAccess -> checkArrayAccess(expr)
     }
 

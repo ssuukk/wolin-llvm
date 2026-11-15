@@ -125,4 +125,21 @@ class ControlFlowTest {
         """)
         assertEquals(2, bytes[0].toInt() and 0xFF)
     }
+
+    @Test fun `when as an expression takes the taken branch's value`() {
+        val bytes = runProgram("""
+            fun main() {
+                var x: ubyte = 2
+                var r: ubyte = when (x) {
+                    1 -> 10
+                    2 -> 20
+                    else -> 30
+                }
+                var out: ubyte^0x400 = 0
+                out = r
+                while (true) {}
+            }
+        """)
+        assertEquals(20, bytes[0].toInt() and 0xFF)
+    }
 }

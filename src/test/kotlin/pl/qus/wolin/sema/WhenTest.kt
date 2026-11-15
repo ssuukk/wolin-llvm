@@ -43,4 +43,19 @@ class WhenTest {
             typeChecker("fun f(x: ubyte) { when (x) { is ubyte -> { } } }")
         }
     }
+
+    @Test fun `a when expression takes the taken branch's value type`() {
+        // Consistent branch types: the value is that type.
+        typeChecker("fun f(x: ubyte): ubyte { return when (x) { 1 -> 10 else -> 20 } }")
+        // A float when expression is a float.
+        typeChecker("fun f(x: ubyte): float { return when (x) { 1 -> 1.5 else -> 2.5 } }")
+    }
+
+    @Test fun `mismatched when expression branch types give no value`() {
+        // Mismatched branch types (ubyte and bool) unify to unit, so the
+        // expression carries no usable value: assigning it to a `ubyte` fails.
+        assertThrows<SemaException> {
+            typeChecker("fun f(x: ubyte) { var r: ubyte = when (x) { 1 -> 10 else -> true } }")
+        }
+    }
 }

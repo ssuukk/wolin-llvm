@@ -174,6 +174,19 @@ sealed interface Ast {
         override var type: WolinType
     ) : Expr
 
+    /**
+     * A `when` in expression position. The value is the value of the taken
+     * branch — the value of its last expression, or `unit` when the branch
+     * does not end in an expression. With a [subject] the subject is compared
+     * for equality against each condition in order; without, each condition is
+     * a boolean tested directly. The first matching entry wins.
+     */
+    data class WhenExpr(
+        val subject: Expr?,
+        val entries: List<WhenEntry>,
+        override var type: WolinType
+    ) : Expr
+
     /** `array[index]`. The result type is the element type of the array. */
     data class ArrayAccess(val array: Expr, val index: Expr, override var type: WolinType) : Expr
 
@@ -214,6 +227,7 @@ typealias ReturnStmt = Ast.ReturnStmt
 typealias ReturnAtStmt = Ast.ReturnAtStmt
 typealias BlockStmt = Ast.BlockStmt
 typealias IfExpr = Ast.IfExpr
+typealias WhenExpr = Ast.WhenExpr
 typealias ArrayAccess = Ast.ArrayAccess
 typealias NullLit = Ast.NullLit
 typealias WhenEntry = Ast.WhenEntry

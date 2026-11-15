@@ -17,6 +17,8 @@ import pl.qus.wolin.ast.RealLit
 import pl.qus.wolin.ast.StringLit
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
+import pl.qus.wolin.ast.WhenEntry
+import pl.qus.wolin.ast.WhenExpr
 import pl.qus.wolin.sema.Symbol
 import pl.qus.wolin.sema.TypeKind
 import pl.qus.wolin.sema.WolinType
@@ -112,6 +114,7 @@ class ExprEmitter(
         is ArrayAccess -> emitArrayAccess(e)
         is Call -> emitCall(e)
         is IfExpr -> emitIfExpr(e)
+        is WhenExpr -> emitWhenExpr(e)
         is FunctionLit -> emitFunctionLit(e)
     }
 
@@ -518,5 +521,19 @@ class ExprEmitter(
         }
         stmt.openReserved(endL)
         return IrValue("", IrType.Void)
+    }
+
+    private fun emitWhenExpr(e: WhenExpr): IrValue {
+        val subject = e.subject?.let { emit(it) }
+        val pairs = stmt.whenFlow(subject, e.entries) { entry, endL ->
+            val v = stmt.emitValue(entry.body)
+            stmt.ensureTerminatedOr(endL)
+            v
+        }
+        return when {
+            e.type.kind == TypeKind.UNIT -> IrValue("", IrType.Void)
+            pairs.isNullOrEmpty() -> IrValue("", IrType.Void)
+            else -> b.phi(TypeMapper.ir(e.type), pairs)
+        }
     }
 }

@@ -291,7 +291,7 @@ class AstBuilder {
         ctx.simpleIdentifier()?.let { return VarRef(it.text, Types.unit) }
         ctx.conditionalExpression()?.let { conditional ->
             conditional.ifExpression()?.let { return buildIf(it) }
-            conditional.whenExpression()?.let { unsupported("when expression") }
+            conditional.whenExpression()?.let { return buildWhenExpr(it) }
         }
         ctx.jumpExpression()?.let { return buildJump(it) }
         ctx.loopExpression()?.let { return buildLoop(it) }
@@ -310,11 +310,17 @@ class AstBuilder {
         return IfExpr(cond, then, otherwise, Types.unit)
     }
 
-    private fun buildWhen(ctx: KotlinParser.WhenExpressionContext): WhenStmt {
-        val subject = ctx.expression()?.let { buildExpression(it) }
-        val entries = ctx.whenEntry().map { buildWhenEntry(it) }
-        return WhenStmt(subject, entries)
-    }
+    private fun buildWhen(ctx: KotlinParser.WhenExpressionContext): WhenStmt =
+        WhenStmt(whenSubject(ctx), whenEntries(ctx))
+
+    private fun buildWhenExpr(ctx: KotlinParser.WhenExpressionContext): WhenExpr =
+        WhenExpr(whenSubject(ctx), whenEntries(ctx), Types.unit)
+
+    private fun whenSubject(ctx: KotlinParser.WhenExpressionContext): Expr? =
+        ctx.expression()?.let { buildExpression(it) }
+
+    private fun whenEntries(ctx: KotlinParser.WhenExpressionContext): List<WhenEntry> =
+        ctx.whenEntry().map { buildWhenEntry(it) }
 
     private fun buildWhenEntry(ctx: KotlinParser.WhenEntryContext): WhenEntry {
         val isElse = ctx.ELSE() != null

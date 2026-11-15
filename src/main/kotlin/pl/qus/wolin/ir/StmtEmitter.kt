@@ -22,6 +22,7 @@ import pl.qus.wolin.ast.ReturnStmt
 import pl.qus.wolin.ast.Stmt
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.WhenEntry
+import pl.qus.wolin.ast.WhenExpr
 import pl.qus.wolin.ast.WhenStmt
 import pl.qus.wolin.ast.WhileStmt
 import pl.qus.wolin.sema.TypeKind
@@ -252,19 +253,38 @@ class StmtEmitter(private val b: IrBuilder) {
 
     private fun emitWhen(s: WhenStmt) {
         val subject = s.subject?.let { expr.emit(it) }
-        val nonElse = s.entries.filter { !it.isElse }
-        val elseEntry = s.entries.lastOrNull { it.isElse }
+        whenFlow(subject, s.entries) { entry, endL ->
+            emitWhenEntryBody(entry, endL)
+            null
+        }
+    }
+
+    /**
+     * Emits a `when`'s control flow, shared by the statement and the
+     * expression forms. [emitBody] is called once per branch at that branch's
+     * body label, given the end label the body falls through to; it returns
+     * the value of the branch's last expression, or null when the branch does
+     * not produce one. The result is each producing branch's value with its
+     * body label, or null when no branch produced a value: the expression form
+     * phi-merges those into the value, the statement form ignores it.
+     */
+    fun whenFlow(
+        subject: IrValue?,
+        entries: List<WhenEntry>,
+        emitBody: (WhenEntry, String) -> IrValue?,
+    ): List<Pair<IrValue, String>>? {
+        val nonElse = entries.filter { !it.isElse }
+        val elseEntry = entries.lastOrNull { it.isElse }
 
         if (nonElse.isEmpty()) {
-            if (elseEntry != null) {
-                val elseL = reserveLabel("when.e")
-                val endL = reserveLabel("when.end")
-                unconditionalBranch(elseL)
-                openReserved(elseL)
-                emitWhenEntryBody(elseEntry, endL)
-                openReserved(endL)
-            }
-            return
+            if (elseEntry == null) return null
+            val elseL = reserveLabel("when.e")
+            val endL = reserveLabel("when.end")
+            unconditionalBranch(elseL)
+            openReserved(elseL)
+            val v = emitBody(elseEntry, endL)
+            openReserved(endL)
+            return if (v != null) listOf(v to elseL) else null
         }
 
         val endL = reserveLabel("when.end")
@@ -284,15 +304,17 @@ class StmtEmitter(private val b: IrBuilder) {
             else reserveLabel("when.n$i").also { testLabels += it }
             conditionalBranch(m, bodyL, nextL)
         }
+        val values = mutableListOf<Pair<IrValue, String>>()
         for ((i, entry) in nonElse.withIndex()) {
             openReserved(bodyLabels[i])
-            emitWhenEntryBody(entry, endL)
+            emitBody(entry, endL)?.let { values += it to bodyLabels[i] }
         }
         if (elseL != null) {
             openReserved(elseL)
-            emitWhenEntryBody(elseEntry!!, endL)
+            emitBody(elseEntry!!, endL)?.let { values += it to elseL }
         }
         openReserved(endL)
+        return values.ifEmpty { null }
     }
 
     /**
@@ -423,6 +445,7 @@ class StmtEmitter(private val b: IrBuilder) {
                 collectLocalDecls(e.then, out)
                 collectLocalDecls(e.otherwise, out)
             }
+            is WhenExpr -> e.entries.forEach { collectLocalDecls(it.body, out) }
             is UnaryOp -> collectLocalDeclsInExpr(e.operand, out)
             is BinaryOp -> {
                 collectLocalDeclsInExpr(e.left, out)
