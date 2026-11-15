@@ -229,6 +229,7 @@ class ExprEmitter(
             ">=" -> compare("ge", l, r, e.left.type)
             "&" -> bitwise("and", l, r, e.left.type)
             "|" -> bitwise("or", l, r, e.left.type)
+            "xor" -> bitwise("xor", l, r, e.left.type)
             else -> {
                 val ty = TypeMapper.ir(e.left.type)
                 val name = when (e.op) {

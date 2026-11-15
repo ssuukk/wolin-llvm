@@ -100,6 +100,7 @@ object ConstFolder {
             "%" -> if (rs == 0L) return null else ls % rs
             "&" -> ls and rs
             "|" -> ls or rs
+            "xor" -> ls xor rs
             else -> return null
         }
         return ConstValue.IntValue(mask(result, resultType), resultType)

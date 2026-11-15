@@ -211,8 +211,14 @@ class AstBuilder {
     }
 
     private fun buildInfixCall(ctx: KotlinParser.InfixFunctionCallContext): Expr {
-        if (ctx.simpleIdentifier().isNotEmpty()) unsupported("infix function call")
-        return buildRange(ctx.rangeExpression()[0])
+        val ops = ctx.simpleIdentifier().map { it.text }
+        val other = ops.firstOrNull { it != "xor" }
+        if (other != null) unsupported("infix function call '$other'")
+        return if (ops.isEmpty()) {
+            buildRange(ctx.rangeExpression()[0])
+        } else {
+            chain(ctx.rangeExpression(), ops) { buildRange(it) }
+        }
     }
 
     private fun buildRange(ctx: KotlinParser.RangeExpressionContext): Expr {

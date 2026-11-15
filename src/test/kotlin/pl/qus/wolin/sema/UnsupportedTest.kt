@@ -124,4 +124,8 @@ class UnsupportedTest {
         check("fun f() { while (true) { } }")
         check("fun f() { var i: ubyte = 0; do { i = i + 1 } while (i < 5) }")
     }
+
+    @Test fun `a non-xor infix call stays rejected`() {
+        assertRejected("fun f() { var a: ubyte = 1; var b: ubyte = 2; val x = a and b }")
+    }
 }

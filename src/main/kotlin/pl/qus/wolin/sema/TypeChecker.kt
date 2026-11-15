@@ -530,7 +530,7 @@ class TypeChecker {
                 expr.type = leftType
             }
 
-            "&", "|" -> {
+            "&", "|", "xor" -> {
                 if (leftType.kind != rightType.kind) {
                     throw SemaException("Attempt reassign $leftType $rightType")
                 }

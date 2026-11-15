@@ -68,4 +68,17 @@ class GoldenIrTest {
         val missing = targets - defined
         assertTrue(missing.isEmpty(), "branches to undefined blocks: $missing\n$ir")
     }
+
+    @Test fun `xor emits a bitwise xor instruction`() {
+        val src = """
+            fun f(): ubyte {
+                var a: ubyte = 0x0F
+                var b: ubyte = 0xF0
+                var c = a xor b
+                return c
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("xor i8"), ir)
+    }
 }

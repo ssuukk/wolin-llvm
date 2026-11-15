@@ -190,4 +190,23 @@ class TypeCheckerTest {
         val x = program.functions[0].body.filterIsInstance<Ast.LocalDecl>().first()
         assertEquals(Types.ubyte, x.type)
     }
+
+    @Test fun `xor takes the left operand type`() {
+        fun typeOfLast(src: String): WolinType =
+            typeChecker(src).functions[0].body.filterIsInstance<Ast.LocalDecl>().last().type
+        assertEquals(Types.ubyte, typeOfLast("fun f() { var a: ubyte = 1; var b: ubyte = 2; var c = a xor b }"))
+        assertEquals(Types.word, typeOfLast("fun f() { var a: word = 1; var b: word = 2; var c = a xor b }"))
+    }
+
+    @Test fun `xor rejects mixed operand types`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var a: ubyte = 1; var b: uword = 2; var c = a xor b }")
+        }
+    }
+
+    @Test fun `xor rejects bool operands`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var a: bool = true; var b: bool = false; var c = a xor b }")
+        }
+    }
 }

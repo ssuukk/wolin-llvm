@@ -47,4 +47,47 @@ class BitOpsTest {
         assertEquals(0x30, bytes[0].toInt() and 0xFF)   // x &= 0b00111100
         assertEquals(0xFF, bytes[1].toInt() and 0xFF)   // y |= 0b00001111
     }
+
+    @Test fun `xor of two bytes runs on the real 6502`() {
+        val bytes = runProgram("""
+            fun main() {
+                var a: ubyte = 0x0F
+                var b: ubyte = 0xF0
+                var out: ubyte^0x400 = 0
+                out = a xor b
+                while (true) {}
+            }
+        """)
+        assertEquals(0xFF, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test fun `a literal in xor takes the operand type`() {
+        val bytes = runProgram("""
+            fun main() {
+                var a: uword = 0x0F0F
+                var out: uword^0x400 = 0
+                out = a xor 0xFFFF
+                while (true) {}
+            }
+        """)
+        assertEquals(0xF0, bytes[0].toInt() and 0xFF)
+        assertEquals(0xF0, bytes[1].toInt() and 0xFF)
+    }
+
+    @Test fun `xor precedence sits between the additive and the equality level`() {
+        // a | b xor c & d must group as (a | b) xor (c & d) = 0x00.
+        // The plausible wrong grouping a | (b xor (c & d)) yields 0x11.
+        val bytes = runProgram("""
+            fun main() {
+                var a: ubyte = 0x11
+                var b: ubyte = 0x11
+                var c: ubyte = 0x11
+                var d: ubyte = 0x11
+                var out: ubyte^0x400 = 0
+                out = a | b xor c & d
+                while (true) {}
+            }
+        """)
+        assertEquals(0x00, bytes[0].toInt() and 0xFF)
+    }
 }
