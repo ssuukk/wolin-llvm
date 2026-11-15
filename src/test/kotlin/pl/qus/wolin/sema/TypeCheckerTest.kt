@@ -49,6 +49,15 @@ class TypeCheckerTest {
     @Test fun `negative literal into an unsigned destination is rejected`() {
         assertThrows<SemaException> { typeOf("var x: ubyte = -1") }
     }
+    @Test fun `byte literals cover the full two's complement range`() {
+        assertEquals(Types.byte, typeOf("var x: byte = -128"))
+        assertEquals(Types.byte, typeOf("var x = -128"))
+    }
+
+    @Test fun `byte literals outside the range are rejected`() {
+        assertThrows<SemaException> { typeOf("var x: byte = 128") }
+        assertThrows<SemaException> { typeOf("var x: byte = -129") }
+    }
 
     @Test fun `comparison produces a bool`() {
         val program = typeChecker("fun f() { var a: ubyte = 1; var b: ubyte = 2; var c = a == b }")

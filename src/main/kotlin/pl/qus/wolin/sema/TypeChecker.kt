@@ -782,15 +782,15 @@ class TypeChecker {
     private fun smallestType(value: Long): WolinType = when {
         value in 0..255 -> Types.ubyte
         value in 256..65535 -> Types.uword
-        value in -127..-1 -> Types.byte
-        value in -32768..-128 -> Types.word
+        value in -128..-1 -> Types.byte
+        value in -32768..-129 -> Types.word
         else -> throw SemaException("Value out of range")
     }
 
     /** Whether `value` fits into `type`. */
     private fun fits(value: Long, type: WolinType): Boolean = when (type.kind) {
         TypeKind.UBYTE -> value in 0..255
-        TypeKind.BYTE -> value in -127..127
+        TypeKind.BYTE -> value in -128..127
         TypeKind.UWORD -> value in 0..65535
         TypeKind.WORD -> value in -32768..32767
         else -> false
