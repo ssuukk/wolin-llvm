@@ -128,4 +128,12 @@ class UnsupportedTest {
     @Test fun `a non-xor infix call stays rejected`() {
         assertRejected("fun f() { var a: ubyte = 1; var b: ubyte = 2; val x = a and b }")
     }
+
+    @Test fun `an unknown member call stays rejected`() {
+        assertRejected("fun f() { var b: byte = 1; var x = b.other() }")
+    }
+
+    @Test fun `a conversion call with arguments stays rejected`() {
+        assertRejected("fun f() { var b: byte = 1; var x = b.toWord(2) }")
+    }
 }

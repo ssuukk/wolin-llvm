@@ -46,4 +46,48 @@ class SignedByteTest {
         """)
         assertEquals(1, bytes[0].toInt() and 0xFF)
     }
+
+    @Test fun `a byte converts to a word with sign extension`() {
+        val bytes = runProgram("""
+            fun main() {
+                var b: byte = -2
+                var w: word = b.toWord()
+                var r: word = w + 1
+                var ok: bool = r + 1 == 0
+                var out: ubyte^0x400 = 0
+                out = if (ok) 1 else 0
+                while (true) {}
+            }
+        """)
+        assertEquals(1, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test fun `sign extension fills the high byte`() {
+        val bytes = runProgram("""
+            fun main() {
+                var b: byte = -1
+                var w: word = b.toWord()
+                var hi: ubyte = ((w & -256) / 256).toUbyte()
+                var out: ubyte^0x400 = 0
+                out = hi
+                while (true) {}
+            }
+        """)
+        assertEquals(0xFF, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test fun `a converted global initialiser runs on the real 6502`() {
+        val bytes = runProgram("""
+            var b: byte = -1
+            var w: word = b.toWord()
+            fun main() {
+                var r: word = w + 1
+                var ok: bool = r == 0
+                var out: ubyte^0x400 = 0
+                out = if (ok) 1 else 0
+                while (true) {}
+            }
+        """)
+        assertEquals(1, bytes[0].toInt() and 0xFF)
+    }
 }

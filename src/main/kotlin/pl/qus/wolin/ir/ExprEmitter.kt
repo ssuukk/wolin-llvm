@@ -6,6 +6,7 @@ import pl.qus.wolin.ast.Assign
 import pl.qus.wolin.ast.BinaryOp
 import pl.qus.wolin.ast.BoolLit
 import pl.qus.wolin.ast.Call
+import pl.qus.wolin.ast.Convert
 import pl.qus.wolin.ast.CharLit
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FunctionLit
@@ -116,6 +117,24 @@ class ExprEmitter(
         is IfExpr -> emitIfExpr(e)
         is WhenExpr -> emitWhenExpr(e)
         is FunctionLit -> emitFunctionLit(e)
+        is Convert -> emitConvert(e)
+    }
+
+    /**
+     * The explicit conversion: same width is a reinterpretation (no code),
+     * widening is `sext` for a signed source and `zext` for an unsigned one,
+     * narrowing is `trunc` (the low bits, no range check).
+     */
+    private fun emitConvert(e: Convert): IrValue {
+        val v = emit(e.value)
+        val vty = v.type
+        val tty = TypeMapper.ir(e.to)
+        return when {
+            vty == tty -> v
+            tty == IrType.I16 ->
+                b.instr(tty, "${if (isUnsigned(e.value.type)) "zext" else "sext"} ${vty.llvmName()} ${v.name} to ${tty.llvmName()}")
+            else -> b.instr(tty, "trunc ${vty.llvmName()} ${v.name} to ${tty.llvmName()}")
+        }
     }
 
     // ---- literals ---------------------------------------------------------

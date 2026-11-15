@@ -273,11 +273,47 @@ class AstBuilder {
                 operation.EXCL().isNotEmpty() -> unsupported("not-null assertion")
                 operation.callSuffix() != null -> buildCall(result, operation.callSuffix())
                 operation.arrayAccess() != null -> buildArrayAccess(result, operation.arrayAccess())
-                operation.memberAccessOperator() != null -> unsupported("member access")
+                operation.memberAccessOperator() != null ->
+                    buildConversion(result, operation) ?: unsupported("member access")
                 else -> unsupported("postfix operator")
             }
         }
         return result
+    }
+
+    /**
+     * `b.toWord()` and friends: a dot call of one of the four conversion names
+     * with no arguments and no type arguments, possibly chained
+     * (`b.toUbyte().toUword()`). Anything else — other names, arguments, type
+     * arguments, a non-identifier callee, any other postfix operation on the
+     * callee — is not a conversion and returns null, so the caller rejects it
+     * as member access.
+     */
+    private fun buildConversion(value: Expr, operation: KotlinParser.PostfixUnaryOperationContext): Convert? {
+        var current = value
+        var op = operation
+        while (true) {
+            val inner = op.postfixUnaryExpression() ?: return null
+            val name = inner.atomicExpression().simpleIdentifier()?.text ?: return null
+            val target = when (name) {
+                "toByte" -> Types.byte
+                "toUbyte" -> Types.ubyte
+                "toWord" -> Types.word
+                "toUword" -> Types.uword
+                else -> return null
+            }
+            val ops = inner.postfixUnaryOperation()
+            val call = ops.firstOrNull()?.callSuffix() ?: return null
+            if (call.typeArguments() != null) return null
+            if (call.valueArguments()?.valueArgument().orEmpty().isNotEmpty()) return null
+            current = Convert(current, target, Types.unit)
+            val rest = ops.subList(1, ops.size)
+            if (rest.isEmpty()) return current
+            if (rest.size != 1) return null
+            val next = rest.first()
+            if (next.memberAccessOperator() == null) return null
+            op = next
+        }
     }
 
     private fun buildCall(callee: Expr, ctx: KotlinParser.CallSuffixContext): Expr {

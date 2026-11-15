@@ -81,4 +81,32 @@ class GoldenIrTest {
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
         assertTrue(ir.contains("xor i8"), ir)
     }
+
+    @Test fun `conversions emit the right extension instruction`() {
+        val src = """
+            fun f(): uword {
+                var b: byte = -1
+                var u: ubyte = 255
+                var w: word = 300
+                var x = b.toWord()
+                var y = u.toUword()
+                var z = w.toByte()
+                return x.toUword() + y - z.toUbyte().toUword()
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("sext i8"), "sign extension missing:\n$ir")
+        assertTrue(ir.contains("zext i8"), "zero extension missing:\n$ir")
+        assertTrue(ir.contains("trunc i16"), "truncation missing:\n$ir")
+    }
+
+    @Test fun `a converted global initialiser folds to a constant`() {
+        val src = """
+            var b: byte = -1
+            var w: word = b.toWord()
+            fun main() { while (true) {} }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("i16 -1"), "the folded global must be the sign extension:\n$ir")
+    }
 }

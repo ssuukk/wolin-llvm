@@ -218,4 +218,18 @@ class TypeCheckerTest {
             typeChecker("fun f() { var a: bool = true; var b: bool = false; var c = a xor b }")
         }
     }
+
+    @Test fun `conversion takes the target type`() {
+        fun typeOfLast(src: String): WolinType =
+            typeChecker(src).functions[0].body.filterIsInstance<Ast.LocalDecl>().last().type
+        assertEquals(Types.word, typeOfLast("fun f() { var b: byte = -1; var w = b.toWord() }"))
+        assertEquals(Types.ubyte, typeOfLast("fun f() { var b: byte = -1; var u = b.toUbyte() }"))
+        assertEquals(Types.uword, typeOfLast("fun f() { var u: ubyte = 255; var w = u.toUword() }"))
+        assertEquals(Types.byte, typeOfLast("fun f() { var w: word = -1; var b = w.toByte() }"))
+    }
+
+    @Test fun `conversion rejects non-integer operands`() {
+        assertThrows<SemaException> { typeChecker("fun f() { var f: bool = true; var x = f.toByte() }") }
+        assertThrows<SemaException> { typeChecker("fun f() { var s: string = \"\"; var x = s.toByte() }") }
+    }
 }

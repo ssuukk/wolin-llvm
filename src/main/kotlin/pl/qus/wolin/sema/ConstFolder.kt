@@ -3,6 +3,7 @@ package pl.qus.wolin.sema
 import pl.qus.wolin.ast.BinaryOp
 import pl.qus.wolin.ast.BoolLit
 import pl.qus.wolin.ast.CharLit
+import pl.qus.wolin.ast.Convert
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.IntLit
 import pl.qus.wolin.ast.NullLit
@@ -42,6 +43,7 @@ object ConstFolder {
         }
         is UnaryOp -> foldUnary(expr, constSoFar, functionNames)
         is BinaryOp -> foldBinary(expr, constSoFar, functionNames)
+        is Convert -> foldConvert(expr, constSoFar, functionNames)
         else -> null
     }
 
@@ -80,6 +82,27 @@ object ConstFolder {
             l is ConstValue.FloatValue && r is ConstValue.FloatValue -> foldFloat(e.op, l, r)
             else -> null
         }
+    }
+
+    /**
+     * A conversion over a constant: the source is read in its own signedness,
+     * then widened (sign- or zero-extended) or truncated to the target width,
+     * exactly as the `sext`/`zext`/`trunc` instructions do. `(src shl 24) shr 24`
+     * is the two's-complement sign extension of an 8-bit value to 16 bits.
+     */
+    private fun foldConvert(
+        e: Convert,
+        constSoFar: Map<String, ConstValue>,
+        functionNames: Map<String, String>,
+    ): ConstValue? {
+        val v = fold(e.value, constSoFar, functionNames) as? ConstValue.IntValue ?: return null
+        val signed = isSigned(v.type)
+        val src = if (signed) signedView(mask(v.bits, v.type), v.type) else mask(v.bits, v.type)
+        val bits = when {
+            width(e.to) == 16 && width(v.type) == 8 -> if (signed) (src shl 24) shr 24 else src
+            else -> src
+        }
+        return ConstValue.IntValue(bits, e.to)
     }
 
     /**

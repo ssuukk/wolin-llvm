@@ -190,6 +190,12 @@ sealed interface Ast {
     /** `array[index]`. The result type is the element type of the array. */
     data class ArrayAccess(val array: Expr, val index: Expr, override var type: WolinType) : Expr
 
+    /**
+     * An explicit integer conversion: `value.toByte()`, `.toUbyte()`, `.toWord()`
+     * or `.toUword()`. [to] is the target type; the checker fills [type] with it.
+     */
+    data class Convert(val value: Expr, val to: WolinType, override var type: WolinType) : Expr
+
     /** The `null` literal. */
     data class NullLit(override var type: WolinType) : Expr
 }
@@ -229,6 +235,7 @@ typealias BlockStmt = Ast.BlockStmt
 typealias IfExpr = Ast.IfExpr
 typealias WhenExpr = Ast.WhenExpr
 typealias ArrayAccess = Ast.ArrayAccess
+typealias Convert = Ast.Convert
 typealias NullLit = Ast.NullLit
 typealias WhenEntry = Ast.WhenEntry
 typealias WhenStmt = Ast.WhenStmt

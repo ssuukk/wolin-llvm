@@ -408,6 +408,7 @@ class TypeChecker {
         is IfExpr -> checkIfExpr(expr, expected)
         is WhenExpr -> checkWhenExpr(expr, expected)
         is ArrayAccess -> checkArrayAccess(expr)
+        is Convert -> checkConvert(expr)
     }
 
     /**
@@ -759,6 +760,20 @@ class TypeChecker {
             throw SemaException("Array index must be an integer, not $indexType")
         }
         expr.type = elementType
+        return expr.type
+    }
+
+    /**
+     * An explicit conversion: the operand must be an integer, the result is the
+     * named target type. This is the only way a value changes integer type —
+     * there is no promotion anywhere else.
+     */
+    private fun checkConvert(expr: Convert): WolinType {
+        val valueType = checkExpr(expr.value, null)
+        if (!valueType.isInteger) {
+            throw SemaException("${expr.to} conversion requires an integer, not $valueType")
+        }
+        expr.type = expr.to
         return expr.type
     }
 
