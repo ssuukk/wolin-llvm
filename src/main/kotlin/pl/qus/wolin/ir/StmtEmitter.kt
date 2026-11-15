@@ -77,6 +77,15 @@ class StmtEmitter(private val b: IrBuilder) {
         loops.clear()
         localSlots.clear()
 
+        // A global of another file lives under that file's prefix, so the
+        // reference names the file that declares it. These are declared
+        // first: the file's own globals shadow them.
+        for (foreign in foreignGlobals) {
+            vars.declare(
+                foreign.decl.name,
+                VarStorage.Global("${foreign.prefix}.${foreign.decl.name}"),
+            )
+        }
         for (g in globals) {
             val storage = when (val loc = g.location) {
                 is FixedAddress -> VarStorage.Fixed(loc.address)
@@ -84,14 +93,6 @@ class StmtEmitter(private val b: IrBuilder) {
                 else -> VarStorage.Global("$prefix.${g.name}")
             }
             vars.declare(g.name, storage)
-        }
-        // A global of another file lives under that file's prefix, so the
-        // reference names the file that declares it.
-        for (foreign in foreignGlobals) {
-            vars.declare(
-                foreign.decl.name,
-                VarStorage.Global("${foreign.prefix}.${foreign.decl.name}"),
-            )
         }
         params.forEach { vars.declare(it.name.removePrefix("%"), VarStorage.Param(it)) }
 

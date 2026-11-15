@@ -61,7 +61,8 @@ class TypeChecker {
             globals.declare(fn.name, Symbol.FunSymbol(fn, fileScope.mangledPrefix))
         }
         // A declaration of another file in the same package is visible
-        // without an import; one from another package is not.
+        // without an import; one from another package is not. These are
+        // declared first: the file's own declarations shadow them.
         program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
             .forEach { other ->
                 other.functions.forEach { fn ->
@@ -77,6 +78,15 @@ class TypeChecker {
                     )
                 }
             }
+        fileScope.globals.forEach { global ->
+            globals.declare(
+                global.name,
+                Symbol.DataSymbol(
+                    global.type, global.location, global.init, global.isVal,
+                    fileScope.mangledPrefix,
+                ),
+            )
+        }
         // An import brings a name from another package into scope; without
         // the import the name does not resolve at all.
         fileScope.imports.forEach { import ->
@@ -91,8 +101,15 @@ class TypeChecker {
             globals.declare(imported, symbol)
         }
         // The constant value of every global checked so far: a global's
-        // initialiser may reference only globals declared before it.
+        // initialiser may reference only globals declared before it. The
+        // constants of the other files of the same package come first: they
+        // are initialised before this file's, in command-line order.
         val constSoFar = LinkedHashMap<String, ConstValue>()
+        program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
+            .flatMap { it.globals }
+            .forEach { global ->
+                global.constValue?.let { constSoFar[global.name] = it }
+            }
         val functionNames = fileScope.functions.map { it.name }.toSet()
         fileScope.globals.forEachIndexed { index, global ->
             checkGlobal(global, fileScope, index, constSoFar, functionNames)
