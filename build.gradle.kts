@@ -61,7 +61,27 @@ tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileTestKotlin"
     libraries.from(antlrClasses)
 }
 
+/**
+ * Prints the runtime classpath of the compiler, so the CLI can be run
+ * without installing it:
+ *
+ * ```
+ * java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt ...
+ * ```
+ */
+tasks.register("printClasspath") {
+    val classpath = sourceSets["main"].runtimeClasspath + files(antlrClasses)
+    doLast { println(classpath.asPath) }
+}
+
 tasks.test {
     useJUnitPlatform()
     classpath += files(antlrClasses)
+    // The CLI test runs the CLI as a subprocess, so it needs the runtime
+    // classpath. The generated parser is not on the main runtime classpath,
+    // so it is added here.
+    systemProperty(
+        "wolinc.runtimeClasspath",
+        (sourceSets["main"].runtimeClasspath + files(antlrClasses)).asPath,
+    )
 }

@@ -43,14 +43,23 @@ private data class Options(
  * write each module's `.ll`, validate each, and link the `.prg`.
  */
 fun main(args: Array<String>) {
-    val opts = parseArgs(args) ?: run {
-        System.err.println(USAGE)
-        exitProcess(1)
-    }
-    exitProcess(run(opts))
+    exitProcess(runCli(args.asList()))
 }
 
-private fun parseArgs(args: Array<String>): Options? {
+/**
+ * The CLI's work, callable in-process: it returns the exit code instead of
+ * calling [System.exit], so a test can drive it without killing the test
+ * JVM.
+ */
+fun runCli(args: List<String>): Int {
+    val opts = parseArgs(args) ?: run {
+        System.err.println(USAGE)
+        return 1
+    }
+    return run(opts)
+}
+
+private fun parseArgs(args: List<String>): Options? {
     val inputs = mutableListOf<Path>()
     var output: Path? = null
     var debug = false
