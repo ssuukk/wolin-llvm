@@ -14,7 +14,13 @@ sealed class Symbol {
         val location: Location?,
         val init: Expr?,
         /** `val` declarations cannot be assigned to. */
-        val isVal: Boolean = false
+        val isVal: Boolean = false,
+        /**
+         * The mangled prefix of the file that declares the variable, when it
+         * is not the file being emitted: a global of another file lives
+         * under that file's prefix.
+         */
+        val prefix: String = "",
     ) : Symbol()
 
     /**

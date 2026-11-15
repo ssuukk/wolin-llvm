@@ -16,7 +16,55 @@ class ImportResolver {
      * The symbol [name] refers to through [imports], or null when no import
      * brings it in.
      */
-    fun resolve(name: String, imports: List<ImportDecl>, program: Ast.Program): Symbol? {
+    fun resolve(name: String, imports: List<ImportDecl>, program: Ast.Program): Symbol? =
+        resolveFunction(name, imports, program) ?: resolveGlobal(name, imports, program)
+
+    /**
+     * The global [name] refers to through [imports], or null when no import
+     * brings it in.
+     */
+    fun resolveGlobal(name: String, imports: List<ImportDecl>, program: Ast.Program): Symbol? {
+        for (import in imports) {
+            if (import.alias != null) {
+                throw SemaException("import aliases are not supported in v1")
+            }
+            val path = import.path
+            if (path.endsWith(".*")) {
+                val packageName = path.removeSuffix(".*")
+                val scope = program.files.firstOrNull {
+                    it.packageName == packageName && it.globals.any { g -> g.name == name }
+                }
+                if (scope != null) {
+                    val global = scope.globals.first { it.name == name }
+                    return Symbol.DataSymbol(
+                        global.type, global.location, global.init, global.isVal, scope.mangledPrefix,
+                    )
+                }
+                continue
+            }
+            val separator = path.lastIndexOf('.')
+            if (separator < 0) continue
+            val packageName = path.substring(0, separator)
+            val importedName = path.substring(separator + 1)
+            if (importedName != name) continue
+            val scope = program.files.firstOrNull {
+                it.packageName == packageName && it.globals.any { g -> g.name == name }
+            }
+            if (scope != null) {
+                val global = scope.globals.first { it.name == name }
+                return Symbol.DataSymbol(
+                    global.type, global.location, global.init, global.isVal, scope.mangledPrefix,
+                )
+            }
+        }
+        return null
+    }
+
+    /**
+     * The function [name] refers to through [imports], or null when no
+     * import brings it in.
+     */
+    private fun resolveFunction(name: String, imports: List<ImportDecl>, program: Ast.Program): Symbol? {
         for (import in imports) {
             if (import.alias != null) {
                 throw SemaException("import aliases are not supported in v1")

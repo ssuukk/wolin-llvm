@@ -52,6 +52,7 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
 
         emitGlobals(program, mangledPrefix, constants)
         emitForeignDeclarations(program, mangledPrefix, constants)
+        emitForeignGlobals(program, mangledPrefix, constants)
 
         for (fn in program.functions) {
             val params = fn.params.map { IrValue("%${it.name}", TypeMapper.ir(it.type)) }
@@ -70,7 +71,7 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 params,
                 attributes = if (fn.isInterrupt) listOf("interrupt") else emptyList(),
             )
-            stmt.startFunction(mangledPrefix, params, program.globals, fn)
+            stmt.startFunction(mangledPrefix, params, program.globals, fn, program.visibleGlobals)
             b.endFunction()
         }
         // The function literals are their own functions, so they are emitted
@@ -113,6 +114,19 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 else g.constValue!!.spelling
             } ?: zeroFor(TypeMapper.ir(g.type))
             constants += "@\"$prefix.${g.name}\" = global ${TypeMapper.ir(g.type).llvmName()} $init"
+        }
+    }
+
+    /**
+     * The `declare` statements for the globals of other modules this one
+     * uses: a global of another file is declared here, because its
+     * definition lives in the other module.
+     */
+    private fun emitForeignGlobals(program: Program, prefix: String, constants: MutableList<String>) {
+        for (foreign in program.visibleGlobals) {
+            val name = "${foreign.prefix}.${foreign.decl.name}"
+            val ty = TypeMapper.ir(foreign.decl.type).llvmName()
+            constants += "@$name = external global $ty"
         }
     }
 

@@ -32,6 +32,11 @@ sealed interface Ast {
         val files: List<FileScope> = emptyList(),
         /** The package the file declares, for a program built from one file. */
         val packageName: String = "",
+        /**
+         * The globals of the other files that are visible in this one: the
+         * same-package globals, and the imported ones.
+         */
+        val visibleGlobals: List<ForeignGlobal> = emptyList(),
     ) : Ast
 
     /**
@@ -47,7 +52,17 @@ sealed interface Ast {
         val functions: List<FunDecl>,
         val imports: List<ImportDecl>,
         val mangledPrefix: String,
+        /**
+         * The globals of the other files that are visible in this one: the
+         * same-package globals, and the imported ones. Each carries the
+         * prefix of the file that declares it, because that is the name the
+         * global is emitted under.
+         */
+        val visibleGlobals: List<ForeignGlobal> = emptyList(),
     ) : Ast
+
+    /** A global of another file, visible in this one. */
+    data class ForeignGlobal(val decl: GlobalDecl, val prefix: String) : Ast
 
     data class ImportDecl(val path: String, val alias: String?) : Ast
 
@@ -204,3 +219,4 @@ typealias NullLit = Ast.NullLit
 typealias WhenEntry = Ast.WhenEntry
 typealias WhenStmt = Ast.WhenStmt
 typealias FileScope = Ast.FileScope
+typealias ForeignGlobal = Ast.ForeignGlobal

@@ -51,6 +51,98 @@ class ImportTest {
         }
     }
 
+    @Test fun `a wildcard import brings a name into scope`() {
+        val program = compileFiles(
+            listOf(
+                SourceFile("lib.wtk", "package lib\nfun helper(): ubyte { return 7 }"),
+                SourceFile(
+                    "main.wtk",
+                    "package app\nimport lib.*\nfun main() { val x = helper() }"
+                ),
+            )
+        )
+        val call = findCall(program)
+        assertTrue(call != null, "the call to helper() must be in the program")
+        val callee = call!!.callee as Ast.VarRef
+        val symbol = program.resolved[callee]
+        assertTrue(symbol is Symbol.FunSymbol, "helper() must bind to lib's function, got $symbol")
+    }
+
+    @Test fun `an imported global is visible unqualified`() {
+        val program = compileFiles(
+            listOf(
+                SourceFile("lib.wtk", "package lib\nvar shared: ubyte = 9"),
+                SourceFile(
+                    "main.wtk",
+                    "package app\nimport lib.shared\nfun main() { val x = shared }"
+                ),
+            )
+        )
+        // The global resolved: the reference is bound to lib's declaration.
+        val ref = findVarRef(program, "shared")
+        assertTrue(ref != null, "the reference to shared must be in the program")
+        val symbol = program.resolved[ref!!]
+        assertTrue(symbol is Symbol.DataSymbol, "shared must bind to lib's global, got $symbol")
+    }
+
+    @Test fun `a global from another package without an import does not resolve`() {
+        assertFailsWith<SemaException> {
+            compileFiles(
+                listOf(
+                    SourceFile("lib.wtk", "package lib\nvar shared: ubyte = 9"),
+                    SourceFile("main.wtk", "package app\nfun main() { val x = shared }"),
+                )
+            )
+        }
+    }
+
+    /** The first reference to [name] in the program. */
+    private fun findVarRef(program: Ast.Program, name: String): Ast.VarRef? {
+        var found: Ast.VarRef? = null
+        lateinit var walkExpr: (Ast.Expr) -> Unit
+        lateinit var walkStmt: (Ast.Stmt) -> Unit
+        walkExpr = { e ->
+            if (e is Ast.VarRef && e.name == name && found == null) {
+                found = e
+            }
+            when (e) {
+                is Ast.BinaryOp -> { walkExpr(e.left); walkExpr(e.right) }
+                is Ast.UnaryOp -> walkExpr(e.operand)
+                is Ast.Call -> { walkExpr(e.callee); e.args.forEach { walkExpr(it) } }
+                is Ast.Assign -> { walkExpr(e.target); walkExpr(e.value) }
+                is Ast.ArrayAccess -> { walkExpr(e.array); walkExpr(e.index) }
+                is Ast.IfExpr -> {
+                    walkExpr(e.cond)
+                    e.then.forEach { walkStmt(it) }
+                    e.otherwise.forEach { walkStmt(it) }
+                }
+                else -> {}
+            }
+        }
+        walkStmt = { s ->
+            when (s) {
+                is Ast.LocalDecl -> s.init?.let { walkExpr(it) }
+                is Ast.ExprStmt -> walkExpr(s.expr)
+                is Ast.BlockStmt -> s.body.forEach { walkStmt(it) }
+                is Ast.IfStmt -> {
+                    walkExpr(s.cond)
+                    s.then.forEach { walkStmt(it) }
+                    s.otherwise.forEach { walkStmt(it) }
+                }
+                is Ast.WhileStmt -> { walkExpr(s.cond); s.body.forEach { walkStmt(it) } }
+                is Ast.ReturnStmt -> s.value?.let { walkExpr(it) }
+                is Ast.WhenStmt -> s.entries.forEach { entry ->
+                    entry.conditions.forEach { walkExpr(it) }
+                    entry.body.forEach { walkStmt(it) }
+                }
+                else -> {}
+            }
+        }
+        program.functions.forEach { f -> f.body.forEach { walkStmt(it) } }
+        program.globals.forEach { g -> g.init?.let { walkExpr(it) } }
+        return found
+    }
+
     private fun compileFiles(files: List<SourceFile>): Ast.Program =
         pl.qus.wolin.driver.ProgramBuilder().build(files)
 

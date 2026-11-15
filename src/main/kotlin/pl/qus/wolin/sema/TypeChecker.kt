@@ -21,9 +21,14 @@ class TypeChecker {
     private var currentReturnType: WolinType? = null
     private var currentFunctionName: String = ""
     private val importResolver = ImportResolver()
+    /** The imports of the file being checked. */
+    private var fileImports: List<ImportDecl> = emptyList()
+    /** The whole-program view the imports resolve against. */
+    private var program: Ast.Program? = null
 
     fun check(file: Ast.Program): Ast.Program {
         resolved = IdentityHashMap()
+        program = file
         // The whole-program view: each file is checked in its own scope, so
         // a name from another package is visible only through an import.
         val scopes = file.files.ifEmpty { listOf(singleFileScope(file)) }
@@ -47,6 +52,7 @@ class TypeChecker {
     private fun checkFile(fileScope: FileScope, program: Ast.Program) {
         val globals = Scope()
         scope = globals
+        fileImports = fileScope.imports
 
         // The file's own functions are visible everywhere inside it, so they
         // are declared before anything is checked — a call may name a
@@ -54,12 +60,21 @@ class TypeChecker {
         fileScope.functions.forEach { fn ->
             globals.declare(fn.name, Symbol.FunSymbol(fn, fileScope.mangledPrefix))
         }
-        // A function of another file in the same package is visible without
-        // an import; one from another package is not.
+        // A declaration of another file in the same package is visible
+        // without an import; one from another package is not.
         program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
             .forEach { other ->
                 other.functions.forEach { fn ->
                     globals.declare(fn.name, Symbol.FunSymbol(fn, other.mangledPrefix))
+                }
+                other.globals.forEach { global ->
+                    globals.declare(
+                        global.name,
+                        Symbol.DataSymbol(
+                            global.type, global.location, global.init, global.isVal,
+                            other.mangledPrefix,
+                        ),
+                    )
                 }
             }
         // An import brings a name from another package into scope; without
@@ -325,8 +340,22 @@ class TypeChecker {
         is ArrayAccess -> checkArrayAccess(expr)
     }
 
+    /**
+     * The symbol [name] refers to: the scope first, then the imports.
+     *
+     * A wildcard import (`import a.b.*`) brings in names that are not known
+     * until one is used, so the import is consulted when the scope has no
+     * declaration of the name.
+     */
+    private fun lookup(name: String): Symbol? {
+        val symbol = scope.lookup(name)
+        if (symbol != null) return symbol
+        val program = program ?: return null
+        return importResolver.resolve(name, fileImports, program)
+    }
+
     private fun checkVarRef(expr: VarRef): WolinType {
-        val symbol = scope.lookup(expr.name)
+        val symbol = lookup(expr.name)
             ?: throw SemaException("Unknown variable ${expr.name}")
         when (symbol) {
             is Symbol.DataSymbol -> expr.type = symbol.type
@@ -449,7 +478,7 @@ class TypeChecker {
     private fun checkAssign(expr: Assign): WolinType {
         when (val target = expr.target) {
             is VarRef -> {
-                val symbol = scope.lookup(target.name)
+                val symbol = lookup(target.name)
                     ?: throw SemaException("Unknown variable ${target.name}")
                 val data = symbol as? Symbol.DataSymbol
                     ?: throw SemaException("Cannot assign to function ${target.name}")
@@ -539,7 +568,7 @@ class TypeChecker {
         if (callee !is VarRef) {
             throw SemaException("Unsupported call target")
         }
-        val symbol = scope.lookup(callee.name)
+        val symbol = lookup(callee.name)
             ?: throw SemaException("Unknown function ${callee.name}")
         when (symbol) {
             is Symbol.FunSymbol -> {

@@ -2,6 +2,8 @@ package pl.qus.wolin.driver
 
 import pl.qus.wolin.ast.Ast
 import pl.qus.wolin.ast.FileScope
+import pl.qus.wolin.ast.ForeignGlobal
+import pl.qus.wolin.ast.GlobalDecl
 import pl.qus.wolin.ast.Program
 import pl.qus.wolin.parser.ParserFacade
 import pl.qus.wolin.sema.AstBuilder
@@ -45,12 +47,28 @@ class ProgramBuilder {
                 mangledPrefix = Mangler.mangle(packageName, stem, ""),
             )
         }
+        // The globals another file can see: the same-package ones, and the
+        // imported ones.
+        val visible = scopes.map { scope ->
+            val samePackage = scopes.filter { it.packageName == scope.packageName && it !== scope }
+            val imported: List<GlobalDecl> = scope.imports.flatMap { import ->
+                val packageName = import.path.removeSuffix(".*").substringBeforeLast('.', "")
+                scopes.filter { it.packageName == packageName }.flatMap { it.globals }
+            }
+            val candidates: List<GlobalDecl> = samePackage.flatMap { it.globals } + imported
+            candidates.distinct().map { ForeignGlobal(it, prefixOf(scopes, it)) }
+        }
         val merged = Program(
             globals = scopes.flatMap { it.globals },
             functions = scopes.flatMap { it.functions },
             imports = scopes.flatMap { it.imports },
             files = scopes,
+            visibleGlobals = visible.flatten().distinct(),
         )
         return pl.qus.wolin.sema.TypeChecker().check(merged)
     }
+
+    /** The mangled prefix of the file that declares [global]. */
+    private fun prefixOf(scopes: List<FileScope>, global: GlobalDecl): String =
+        scopes.firstOrNull { it.globals.contains(global) }?.mangledPrefix ?: ""
 }

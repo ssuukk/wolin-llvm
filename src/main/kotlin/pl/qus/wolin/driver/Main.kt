@@ -213,6 +213,7 @@ private fun emitFiles(program: Ast.Program): List<CompiledFile>? {
                 imports = scope.imports,
                 resolved = program.resolved,
                 packageName = scope.packageName,
+                visibleGlobals = visibleGlobalsFor(program, scope),
             ),
             scope.mangledPrefix,
         )
@@ -241,6 +242,28 @@ private fun writeIrFiles(compiled: List<CompiledFile>, dir: Path): List<Path> {
     Files.writeString(driverLl, DriverModule(IrBuilder()).emit(compiled))
     llFiles.add(driverLl)
     return llFiles
+}
+
+/**
+ * The globals of the other files that are visible in [scope]: the
+ * same-package ones, and the imported ones.
+ */
+private fun visibleGlobalsFor(program: Ast.Program, scope: Ast.FileScope): List<Ast.ForeignGlobal> {
+    val samePackage = program.files.filter { it.packageName == scope.packageName && it !== scope }
+    val imported: List<Ast.GlobalDecl> = scope.imports.flatMap { import ->
+        val path = import.path.removeSuffix(".*")
+        val packageName = if (import.path.endsWith(".*")) {
+            path
+        } else {
+            path.substringBeforeLast('.', "")
+        }
+        program.files.filter { it.packageName == packageName }.flatMap { it.globals }
+    }
+    val candidates: List<Ast.GlobalDecl> = samePackage.flatMap { it.globals } + imported
+    return candidates.distinct().map { global ->
+        val owner = program.files.firstOrNull { it.globals.contains(global) }
+        Ast.ForeignGlobal(global, owner?.mangledPrefix ?: "")
+    }
 }
 
 /** The default output: the first input's name with a `.prg` suffix. */

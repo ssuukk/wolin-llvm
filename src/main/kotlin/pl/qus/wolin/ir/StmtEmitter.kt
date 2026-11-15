@@ -9,6 +9,7 @@ import pl.qus.wolin.ast.Call
 import pl.qus.wolin.ast.ContinueStmt
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.ExprStmt
+import pl.qus.wolin.ast.ForeignGlobal
 import pl.qus.wolin.ast.FixedAddress
 import pl.qus.wolin.ast.FixedArray
 import pl.qus.wolin.ast.FunDecl
@@ -61,7 +62,13 @@ class StmtEmitter(private val b: IrBuilder) {
      * `entry`, in source order), emits the body, and closes off the last
      * block.
      */
-    fun startFunction(prefix: String, params: List<IrValue>, globals: List<GlobalDecl>, fn: FunDecl) {
+    fun startFunction(
+        prefix: String,
+        params: List<IrValue>,
+        globals: List<GlobalDecl>,
+        fn: FunDecl,
+        foreignGlobals: List<ForeignGlobal> = emptyList(),
+    ) {
         vars.reset()
         usedLabels.clear()
         usedLabels += "entry"
@@ -77,6 +84,14 @@ class StmtEmitter(private val b: IrBuilder) {
                 else -> VarStorage.Global("$prefix.${g.name}")
             }
             vars.declare(g.name, storage)
+        }
+        // A global of another file lives under that file's prefix, so the
+        // reference names the file that declares it.
+        for (foreign in foreignGlobals) {
+            vars.declare(
+                foreign.decl.name,
+                VarStorage.Global("${foreign.prefix}.${foreign.decl.name}"),
+            )
         }
         params.forEach { vars.declare(it.name.removePrefix("%"), VarStorage.Param(it)) }
 
