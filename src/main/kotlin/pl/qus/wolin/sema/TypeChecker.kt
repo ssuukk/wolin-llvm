@@ -110,7 +110,24 @@ class TypeChecker {
             .forEach { global ->
                 global.constValue?.let { constSoFar[global.name] = it }
             }
-        val functionNames = fileScope.functions.map { it.name }.toSet()
+        // The functions this file can name, with the prefix of the file that
+        // declares each: a function of another file is emitted under that
+        // file's prefix.
+        val functionNames = mutableMapOf<String, String>()
+        fileScope.functions.forEach { fn -> functionNames[fn.name] = fileScope.mangledPrefix }
+        program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
+            .forEach { other ->
+                other.functions.forEach { fn -> functionNames[fn.name] = other.mangledPrefix }
+            }
+        fileScope.imports.forEach { import ->
+            val imported = import.path.removeSuffix(".*").substringAfterLast('.', "")
+            if (imported.isEmpty()) return@forEach
+            val scope = program.files.firstOrNull {
+                it.packageName == import.path.removeSuffix(".*").substringBeforeLast('.', "") &&
+                    it.functions.any { fn -> fn.name == imported }
+            }
+            if (scope != null) functionNames[imported] = scope.mangledPrefix
+        }
         fileScope.globals.forEachIndexed { index, global ->
             checkGlobal(global, fileScope, index, constSoFar, functionNames)
         }
@@ -123,7 +140,7 @@ class TypeChecker {
         fileScope: FileScope,
         index: Int,
         constSoFar: MutableMap<String, ConstValue>,
-        functionNames: Set<String>,
+        functionNames: Map<String, String>,
     ) {
         val declared = global.declaredType
         val init = global.init

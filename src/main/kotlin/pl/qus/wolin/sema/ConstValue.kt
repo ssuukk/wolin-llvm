@@ -44,7 +44,7 @@ sealed interface ConstValue {
      * The spelling is empty: a function address is never a constant in the
      * IR, so the init emitter stores a computed value instead.
      */
-    data class FunctionValue(val name: String) : ConstValue {
+    data class FunctionValue(val name: String, val prefix: String = "") : ConstValue {
         override val spelling: String = ""
     }
 }

@@ -45,9 +45,12 @@ class GlobalInitEmitter(private val b: IrBuilder) {
         val target = "ptr @\"$mangledName.${g.name}\""
         when (val v = g.constValue) {
             is ConstValue.FunctionValue -> {
+                // The function is emitted under the prefix of the file that
+                // declares it, which is not necessarily this file's.
+                val prefix = if (v.prefix.isEmpty()) mangledName else v.prefix
                 val addr = b.instr(
                     IrType.I16,
-                    "ptrtoint i8* @\"${mangledName}.${v.name}\" to i16"
+                    "ptrtoint i8* @\"${prefix}.${v.name}\" to i16"
                 )
                 b.instr(IrType.Void, "store i16 ${addr.name}, $target")
             }

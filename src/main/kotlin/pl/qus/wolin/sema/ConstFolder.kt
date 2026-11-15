@@ -28,7 +28,7 @@ object ConstFolder {
     fun fold(
         expr: Expr,
         constSoFar: Map<String, ConstValue>,
-        functionNames: Set<String>,
+        functionNames: Map<String, String>,
     ): ConstValue? = when (expr) {
         is IntLit -> ConstValue.IntValue(expr.value, expr.type)
         is CharLit -> ConstValue.IntValue(expr.value.toLong(), expr.type)
@@ -36,7 +36,8 @@ object ConstFolder {
         is BoolLit -> ConstValue.BoolValue(expr.value)
         is NullLit -> ConstValue.NullValue
         is VarRef -> when {
-            expr.name in functionNames -> ConstValue.FunctionValue(expr.name)
+            functionNames.containsKey(expr.name) ->
+                ConstValue.FunctionValue(expr.name, functionNames.getValue(expr.name))
             else -> constSoFar[expr.name]
         }
         is UnaryOp -> foldUnary(expr, constSoFar, functionNames)
@@ -51,7 +52,7 @@ object ConstFolder {
     private fun foldUnary(
         e: UnaryOp,
         constSoFar: Map<String, ConstValue>,
-        functionNames: Set<String>,
+        functionNames: Map<String, String>,
     ): ConstValue? {
         val v = fold(e.operand, constSoFar, functionNames) ?: return null
         return when {
@@ -69,7 +70,7 @@ object ConstFolder {
     private fun foldBinary(
         e: BinaryOp,
         constSoFar: Map<String, ConstValue>,
-        functionNames: Set<String>,
+        functionNames: Map<String, String>,
     ): ConstValue? {
         val l = fold(e.left, constSoFar, functionNames) ?: return null
         val r = fold(e.right, constSoFar, functionNames) ?: return null
