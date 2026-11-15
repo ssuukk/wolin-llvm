@@ -90,4 +90,18 @@ class BitOpsTest {
         """)
         assertEquals(0x00, bytes[0].toInt() and 0xFF)
     }
+
+    @Test fun `bitwise operators work inside parentheses`() {
+        val bytes = runProgram("""
+            fun main() {
+                var a: ubyte = 0xFF
+                var b: ubyte = 0x0F
+                var r: ubyte = (a & b)
+                var out: ubyte^0x400 = 0
+                out = r
+                while (true) {}
+            }
+        """)
+        assertEquals(0x0F, bytes[0].toInt() and 0xFF)
+    }
 }
