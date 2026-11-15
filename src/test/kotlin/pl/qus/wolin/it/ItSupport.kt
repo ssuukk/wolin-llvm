@@ -42,9 +42,9 @@ fun runProgram(source: String): ByteArray {
 /**
  * Compile [source] to a .prg, run it under VICE, and return $0800-$080F.
  *
- * The window outside the screen: the ROM's screen-init routine clears
- * `$0400`, so a program that jumps into the ROM keeps its value only
- * outside the screen area.
+ * The window outside the screen: a program that jumps into the ROM may
+ * leave the screen rewritten (see [ReturnAtTest]), so its value is
+ * observed outside the screen area.
  */
 fun runProgramAt0800(source: String): ByteArray {
     val prg = compileToPrg(source, "t")

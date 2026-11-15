@@ -7,11 +7,20 @@ class ReturnAtTest {
     /**
      * The `return@` site is a tail jump: the code after it never runs.
      *
-     * The observation window is `$0800`, not `$0400`: the jump target
-     * `$EA31` is the KERNAL's screen-init routine, and its screen clear
-     * overwrites `$0400` with spaces (32) — the jump leaves the program
-     * into the ROM, exactly as the brief says it may. `$0800` is outside
-     * the screen and keeps the value the program wrote.
+     * The jump target `$EA31` is the KERNAL's IRQ handler (the default
+     * `$0314-$0315` vector target), not a screen-init routine. Jumping
+     * there from ordinary code is a known footgun: the handler ends in
+     * `RTI`, and with no IRQ return data on the stack the `RTI` pops
+     * garbage, so the landing address is unpredictable — in this setup
+     * it ends in BASIC, leaving a cleared screen with a lone `READY.`.
+     * The jump into the ROM is exactly as the brief says it may.
+     *
+     * The observation window is `$0800`, not `$0400`: it is outside the
+     * screen (which the ROM path rewrites) and below the program load
+     * address `$0801`, so it keeps the value the program wrote.
+     *
+     * `return@` to an `RTI`-terminated routine is only sound inside an
+     * `interrupt fun`, where the CPU has pushed the IRQ return data.
      */
     @Test fun `return at a fixed address jumps instead of returning`() {
         val bytes = runProgramAt0800("""
