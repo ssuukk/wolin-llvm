@@ -17,7 +17,14 @@ sealed class Symbol {
         val isVal: Boolean = false
     ) : Symbol()
 
-    data class FunSymbol(val decl: FunDecl) : Symbol()
+    /**
+     * A function.
+     *
+     * [prefix] is the mangled prefix of the file the function is declared
+     * in: the symbol is emitted as `@"<prefix>.<name>"`, so a call from
+     * another file names the defining file's prefix, not the caller's.
+     */
+    data class FunSymbol(val decl: FunDecl, val prefix: String = "") : Symbol()
 }
 
 /**

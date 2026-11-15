@@ -1,11 +1,29 @@
 package pl.qus.wolin.ir
 
+import pl.qus.wolin.ast.ArrayAccess
+import pl.qus.wolin.ast.Assign
+import pl.qus.wolin.ast.BinaryOp
+import pl.qus.wolin.ast.BlockStmt
+import pl.qus.wolin.ast.Call
 import pl.qus.wolin.ast.CpuRegister
+import pl.qus.wolin.ast.Expr
+import pl.qus.wolin.ast.ExprStmt
 import pl.qus.wolin.ast.FixedAddress
 import pl.qus.wolin.ast.FixedArray
-import pl.qus.wolin.ast.Location
+import pl.qus.wolin.ast.FunDecl
 import pl.qus.wolin.ast.GlobalDecl
+import pl.qus.wolin.ast.IfExpr
+import pl.qus.wolin.ast.IfStmt
+import pl.qus.wolin.ast.LocalDecl
+import pl.qus.wolin.ast.Location
 import pl.qus.wolin.ast.Program
+import pl.qus.wolin.ast.ReturnStmt
+import pl.qus.wolin.ast.Stmt
+import pl.qus.wolin.ast.UnaryOp
+import pl.qus.wolin.ast.VarRef
+import pl.qus.wolin.ast.WhenStmt
+import pl.qus.wolin.ast.WhileStmt
+import pl.qus.wolin.sema.Symbol
 import pl.qus.wolin.sema.TypeKind
 import pl.qus.wolin.sema.Types
 import pl.qus.wolin.sema.WolinType
@@ -30,9 +48,10 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
     fun emitFile(program: Program, mangledPrefix: String): String {
         val constants = mutableListOf<String>()
         val stmt = StmtEmitter(b)
-        stmt.expr = ExprEmitter(b, stmt, constants, mangledPrefix, program.resolved)
+        stmt.expr = ExprEmitter(b, stmt, constants, mangledPrefix, program.resolved, program.globals)
 
         emitGlobals(program, mangledPrefix, constants)
+        emitForeignDeclarations(program, mangledPrefix, constants)
 
         for (fn in program.functions) {
             val params = fn.params.map { IrValue("%${it.name}", TypeMapper.ir(it.type)) }
@@ -54,6 +73,10 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             stmt.startFunction(mangledPrefix, params, program.globals, fn)
             b.endFunction()
         }
+        // The function literals are their own functions, so they are emitted
+        // after the file's functions: a module holds one function open at a
+        // time.
+        stmt.expr.lambda.emitCollected(program.globals)
 
         // The init function is emitted into the same builder, so it renders
         // with the module; the driver calls it before main, even when it
@@ -90,6 +113,78 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 else g.constValue!!.spelling
             } ?: zeroFor(TypeMapper.ir(g.type))
             constants += "@\"$prefix.${g.name}\" = global ${TypeMapper.ir(g.type).llvmName()} $init"
+        }
+    }
+
+    /**
+     * The `declare` statements for the functions of other modules this one
+     * calls.
+     *
+     * A module that calls into another module declares the function it
+     * calls: the definition lives in the other module's object file, and the
+     * declaration gives the call a signature to compile against.
+     */
+    private fun emitForeignDeclarations(program: Program, prefix: String, constants: MutableList<String>) {
+        val foreign = linkedMapOf<String, FunDecl>()
+        val refs = mutableListOf<VarRef>()
+        for (g in program.globals) g.init?.let { collectVarRefs(it, refs) }
+        for (fn in program.functions) for (stmt in fn.body) collectStmtVarRefs(stmt, refs)
+        for (ref in refs) {
+            val symbol = program.resolved[ref] as? Symbol.FunSymbol ?: continue
+            if (symbol.prefix == prefix || symbol.prefix.isEmpty()) continue
+            foreign["${symbol.prefix}.${symbol.decl.name}"] = symbol.decl
+        }
+        for ((name, fn) in foreign) {
+            val ret = TypeMapper.ir(fn.retType ?: Types.unit).llvmName()
+            val params = fn.params.joinToString(", ") { p ->
+                "${TypeMapper.ir(p.type).llvmName()} %${p.name}"
+            }
+            constants += "declare $ret @\"$name\"($params)"
+        }
+    }
+
+    /** Every variable reference in [expr]. */
+    private fun collectVarRefs(expr: Expr, out: MutableList<VarRef>) {
+        when (expr) {
+            is VarRef -> out += expr
+            is UnaryOp -> collectVarRefs(expr.operand, out)
+            is BinaryOp -> { collectVarRefs(expr.left, out); collectVarRefs(expr.right, out) }
+            is Call -> { collectVarRefs(expr.callee, out); expr.args.forEach { collectVarRefs(it, out) } }
+            is ArrayAccess -> { collectVarRefs(expr.array, out); collectVarRefs(expr.index, out) }
+            is Assign -> { collectVarRefs(expr.target, out); collectVarRefs(expr.value, out) }
+            is IfExpr -> {
+                collectVarRefs(expr.cond, out)
+                expr.then.forEach { collectStmtVarRefs(it, out) }
+                expr.otherwise.forEach { collectStmtVarRefs(it, out) }
+            }
+            else -> Unit
+        }
+    }
+
+    /** Every variable reference in [stmt]. */
+    private fun collectStmtVarRefs(stmt: Stmt, out: MutableList<VarRef>) {
+        when (stmt) {
+            is LocalDecl -> stmt.init?.let { collectVarRefs(it, out) }
+            is ExprStmt -> collectVarRefs(stmt.expr, out)
+            is BlockStmt -> stmt.body.forEach { collectStmtVarRefs(it, out) }
+            is IfStmt -> {
+                collectVarRefs(stmt.cond, out)
+                stmt.then.forEach { collectStmtVarRefs(it, out) }
+                stmt.otherwise.forEach { collectStmtVarRefs(it, out) }
+            }
+            is WhileStmt -> {
+                collectVarRefs(stmt.cond, out)
+                stmt.body.forEach { collectStmtVarRefs(it, out) }
+            }
+            is ReturnStmt -> stmt.value?.let { collectVarRefs(it, out) }
+            is WhenStmt -> {
+                stmt.subject?.let { collectVarRefs(it, out) }
+                stmt.entries.forEach { entry ->
+                    entry.conditions.forEach { collectVarRefs(it, out) }
+                    entry.body.forEach { collectStmtVarRefs(it, out) }
+                }
+            }
+            else -> Unit
         }
     }
 

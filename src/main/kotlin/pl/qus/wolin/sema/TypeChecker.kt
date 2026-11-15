@@ -20,32 +20,75 @@ class TypeChecker {
     private var resolved: MutableMap<VarRef, Symbol> = IdentityHashMap()
     private var currentReturnType: WolinType? = null
     private var currentFunctionName: String = ""
+    private val importResolver = ImportResolver()
 
     fun check(file: Ast.Program): Ast.Program {
-        val globals = Scope()
-        scope = globals
         resolved = IdentityHashMap()
-
-        // Functions are visible everywhere, so they are declared before anything
-        // is checked — a call may name a function declared further down.
-        file.functions.forEach { fn -> globals.declare(fn.name, Symbol.FunSymbol(fn)) }
-        // The constant value of every global checked so far: a global's
-        // initialiser may reference only globals declared before it.
-        val constSoFar = LinkedHashMap<String, ConstValue>()
-        val functionNames = file.functions.map { it.name }.toSet()
-        file.globals.forEachIndexed { index, global ->
-            checkGlobal(global, file, index, constSoFar, functionNames)
+        // The whole-program view: each file is checked in its own scope, so
+        // a name from another package is visible only through an import.
+        val scopes = file.files.ifEmpty { listOf(singleFileScope(file)) }
+        scopes.forEach { fileScope ->
+            checkFile(fileScope, file)
         }
-        file.functions.forEach { fn -> checkFunction(fn, globals) }
-
         return file.copy(resolved = resolved)
     }
 
+    /** The scope of a program built from a single file. */
+    private fun singleFileScope(file: Ast.Program): FileScope = FileScope(
+        fileName = "",
+        packageName = file.packageName,
+        globals = file.globals,
+        functions = file.functions,
+        imports = file.imports,
+        mangledPrefix = "",
+    )
+
+    /** Checks one file's declarations in its own scope. */
+    private fun checkFile(fileScope: FileScope, program: Ast.Program) {
+        val globals = Scope()
+        scope = globals
+
+        // The file's own functions are visible everywhere inside it, so they
+        // are declared before anything is checked — a call may name a
+        // function declared further down.
+        fileScope.functions.forEach { fn ->
+            globals.declare(fn.name, Symbol.FunSymbol(fn, fileScope.mangledPrefix))
+        }
+        // A function of another file in the same package is visible without
+        // an import; one from another package is not.
+        program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
+            .forEach { other ->
+                other.functions.forEach { fn ->
+                    globals.declare(fn.name, Symbol.FunSymbol(fn, other.mangledPrefix))
+                }
+            }
+        // An import brings a name from another package into scope; without
+        // the import the name does not resolve at all.
+        fileScope.imports.forEach { import ->
+            if (import.alias != null) {
+                throw SemaException("import aliases are not supported in v1")
+            }
+            val path = import.path.removeSuffix(".*")
+            val imported = path.substringAfterLast('.')
+            if (imported.isEmpty() || imported == path) return@forEach
+            val symbol = importResolver.resolve(imported, listOf(import), program)
+                ?: throw SemaException("Cannot resolve import ${import.path}")
+            globals.declare(imported, symbol)
+        }
+        // The constant value of every global checked so far: a global's
+        // initialiser may reference only globals declared before it.
+        val constSoFar = LinkedHashMap<String, ConstValue>()
+        val functionNames = fileScope.functions.map { it.name }.toSet()
+        fileScope.globals.forEachIndexed { index, global ->
+            checkGlobal(global, fileScope, index, constSoFar, functionNames)
+        }
+        fileScope.functions.forEach { fn -> checkFunction(fn, globals) }
+    }
     // ---- declarations -----------------------------------------------------
 
     private fun checkGlobal(
         global: GlobalDecl,
-        file: Ast.Program,
+        fileScope: FileScope,
         index: Int,
         constSoFar: MutableMap<String, ConstValue>,
         functionNames: Set<String>,
@@ -55,7 +98,7 @@ class TypeChecker {
         if (init != null) {
             // The ordering error must beat the plain "unknown variable" the
             // reference check below would report for the same name.
-            val laterNames = file.globals.drop(index + 1).map { it.name }.toSet()
+            val laterNames = fileScope.globals.drop(index + 1).map { it.name }.toSet()
             varRefs(init).firstOrNull { it.name in laterNames }?.let {
                 throw SemaException("initialiser references a global that is not yet initialised")
             }
@@ -277,7 +320,7 @@ class TypeChecker {
         is BinaryOp -> checkBinary(expr)
         is Assign -> checkAssign(expr)
         is Call -> checkCall(expr, expected)
-        is FunctionLit -> checkFunctionLiteral(expr)
+        is FunctionLit -> checkFunctionLiteral(expr, expected)
         is IfExpr -> checkIfExpr(expr, expected)
         is ArrayAccess -> checkArrayAccess(expr)
     }
@@ -511,6 +554,30 @@ class TypeChecker {
             // type is inferred from the expected type, and the arguments are
             // checked only for well-formedness.
             is Symbol.DataSymbol -> {
+                // A function-pointer-typed variable is called through the
+                // pointer: its signature is known, so the arguments are
+                // checked against it.
+                if (symbol.type.kind == TypeKind.FUNCTION) {
+                    resolved[callee] = symbol
+                    callee.type = symbol.type
+                    val params = symbol.type.params
+                    if (params.size != expr.args.size) {
+                        throw SemaException(
+                            "Function ${callee.name} expects ${params.size} arguments " +
+                                "but got ${expr.args.size}"
+                        )
+                    }
+                    expr.args.forEachIndexed { index, argument ->
+                        val argumentType = checkExpr(argument, params[index])
+                        if (argumentType.kind != params[index].kind) {
+                            throw SemaException(
+                                "Attempt reassign ${params[index]} $argumentType"
+                            )
+                        }
+                    }
+                    expr.type = symbol.type.retType ?: Types.unit
+                    return expr.type
+                }
                 if (symbol.type.kind != TypeKind.UWORD) {
                     throw SemaException("${callee.name} not function")
                 }
@@ -537,22 +604,37 @@ class TypeChecker {
         }
     }
 
-    private fun checkFunctionLiteral(expr: FunctionLit): WolinType {
+    private fun checkFunctionLiteral(expr: FunctionLit, expected: WolinType?): WolinType {
+        // The parameter types come from the expected type at the literal's
+        // site; without one there is nothing to infer them from.
+        val paramTypes = FunctionLiteralInfer.infer(expr, expected)
+        expr.paramTypes = paramTypes
+        val retType = expected?.retType ?: Types.unit
         val outer = scope
         val literalScope = scope.child()
         scope = literalScope
         try {
-            expr.params.forEach { name ->
-                literalScope.declare(name, Symbol.DataSymbol(Types.unit, null, null))
+            expr.params.forEachIndexed { index, name ->
+                literalScope.declare(name, Symbol.DataSymbol(paramTypes[index], null, null))
             }
+            currentReturnType = retType
             expr.body.forEach { checkStmt(it) }
+            // The literal's value is its last expression, so that expression
+            // must have the expected return type.
+            val last = expr.body.lastOrNull()
+            if (last is ExprStmt && retType.kind != TypeKind.UNIT) {
+                val valueType = last.expr.type
+                if (valueType.kind != retType.kind) {
+                    throw SemaException("Attempt reassign $retType $valueType")
+                }
+            }
         } finally {
             scope = outer
         }
         expr.type = WolinType(
             TypeKind.FUNCTION,
-            params = expr.params.map { Types.unit },
-            retType = Types.unit
+            params = paramTypes,
+            retType = retType
         )
         return expr.type
     }

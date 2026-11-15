@@ -40,7 +40,9 @@ class DriverModule(private val b: IrBuilder) {
             val init = file.initFnName ?: continue
             b.callVoid(init, emptyList())
         }
-        val userMain = files.firstOrNull { declaresMain(it) }
+        val mains = files.filter { declaresMain(it) }
+        check(mains.size <= 1) { "main must be defined in exactly one place" }
+        val userMain = mains.firstOrNull()
         userMain?.let { b.callVoid("${it.mangledPrefix}.main", emptyList()) }
         b.ret(IrValue("0", IrType.I32))
         b.endFunction()

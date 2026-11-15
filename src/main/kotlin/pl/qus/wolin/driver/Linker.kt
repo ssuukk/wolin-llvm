@@ -1,5 +1,6 @@
 package pl.qus.wolin.driver
 
+import java.nio.file.Files
 import java.nio.file.Path
 
 /**
@@ -8,11 +9,28 @@ import java.nio.file.Path
 class Linker(private val sdk: Sdk) {
 
     /**
-     * Validates one module: compiles it to object code and discards the
+     * Validates the modules: compiles them to object code and discards the
      * result. Throws with the compiler's stderr on failure.
+     *
+     * All the modules are validated together, because a module may call into
+     * another one: validating a file alone would reject every cross-module
+     * call as an undefined value.
      */
-    fun validate(ll: Path) {
-        run(listOf("-fno-lto", "-O2", "-x", "ir", "-c", ll.toString(), "-o", "/dev/null"), workDir = null)
+    fun validate(llFiles: List<Path>) {
+        if (llFiles.isEmpty()) return
+        // Every module is compiled in one go, so the modules can call into
+        // each other: the compiler resolves the cross-module references
+        // while it validates. The object files land in a temporary
+        // directory, which the compiler insists on for several inputs.
+        val outDir = Files.createTempDirectory("wolinc-validate")
+        try {
+            run(
+                listOf("-fno-lto", "-O2", "-x", "ir", "-c") + llFiles.map { it.toString() },
+                workDir = outDir,
+            )
+        } finally {
+            outDir.toFile().deleteRecursively()
+        }
     }
 
     /**

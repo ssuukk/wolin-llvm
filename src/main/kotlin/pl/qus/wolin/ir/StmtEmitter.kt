@@ -24,6 +24,7 @@ import pl.qus.wolin.ast.WhenEntry
 import pl.qus.wolin.ast.WhenStmt
 import pl.qus.wolin.ast.WhileStmt
 import pl.qus.wolin.sema.TypeKind
+import pl.qus.wolin.sema.WolinType
 import java.util.IdentityHashMap
 
 /**
@@ -84,13 +85,33 @@ class StmtEmitter(private val b: IrBuilder) {
         decls.filter { it.location !is FixedAddress && it.location !is FixedArray }
              .forEach { localSlots[it] = b.alloca(TypeMapper.ir(it.type)) }
 
-        fn.body.forEach { emit(it) }
+        if (returnsLastExpression) {
+            // A function literal's value is its last expression: the
+            // expression is emitted once, and its value is returned.
+            val last = fn.body.lastOrNull()
+            val head = if (last is ExprStmt) fn.body.dropLast(1) else fn.body
+            head.forEach { emit(it) }
+            if (!terminated && last is ExprStmt) {
+                b.ret(expr.emit(last.expr))
+                terminated = true
+            }
+        } else {
+            fn.body.forEach { emit(it) }
+        }
 
         if (!terminated) {
             val void = fn.retType == null || fn.retType.kind == TypeKind.UNIT
-            if (void) b.ret(null) else throw error("Function ${fn.name} must return a value")
+            if (void) b.ret(null) else if (!returnsLastExpression) {
+                throw error("Function ${fn.name} must return a value")
+            }
         }
     }
+
+    /**
+     * Whether the current function returns the value of its last expression
+     * instead of a `return` statement: a function literal does.
+     */
+    var returnsLastExpression: Boolean = false
 
     /** Emits one statement into the current block. */
     fun emit(s: Stmt) {

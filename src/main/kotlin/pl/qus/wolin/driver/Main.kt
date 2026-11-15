@@ -6,12 +6,10 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import pl.qus.wolin.ast.Ast
 import pl.qus.wolin.ir.IrBuilder
 import pl.qus.wolin.ir.ModuleEmitter
-import pl.qus.wolin.parser.ParserFacade
-import pl.qus.wolin.sema.AstBuilder
 import pl.qus.wolin.sema.SemaException
-import pl.qus.wolin.sema.TypeChecker
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.deleteRecursively
 import kotlin.io.path.readText
@@ -142,16 +140,16 @@ internal fun compileToPrgFile(
     val compiled = compileFiles(inputs) ?: return null
     val llFiles = writeIrFiles(compiled, workDir)
     val linker = Linker(sdk)
-    for (ll in llFiles) {
-        try {
-            linker.validate(ll)
-        } catch (e: IllegalStateException) {
-            System.err.println(e.message)
-            return null
-        } catch (e: IOException) {
-            System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
-            return null
-        }
+    try {
+        // The modules are validated together: a module may call into
+        // another one, which a single-module compile rejects.
+        linker.validate(llFiles)
+    } catch (e: IllegalStateException) {
+        System.err.println(e.message)
+        return null
+    } catch (e: IOException) {
+        System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
+        return null
     }
     try {
         linker.link(llFiles, output, workDir)
@@ -165,12 +163,56 @@ internal fun compileToPrgFile(
     return llFiles
 }
 
-/** Compiles every input file to an IR module. Null on failure. */
+/**
+ * Compiles every input file to an IR module.
+ *
+ * The files are checked together, so a name from another file resolves
+ * through an import; each file is then emitted into its own module. Null on
+ * failure.
+ */
 private fun compileFiles(inputs: List<Path>): List<CompiledFile>? {
-    val compiled = mutableListOf<CompiledFile>()
+    val sources = mutableListOf<SourceFile>()
     for (input in inputs) {
-        val file = compileFile(input) ?: return null
-        compiled += file
+        val source = try {
+            input.readText()
+        } catch (e: IOException) {
+            System.err.println("error: cannot read $input")
+            return null
+        }
+        sources += SourceFile(input.fileName.toString(), source)
+    }
+    val program = try {
+        ProgramBuilder().build(sources)
+    } catch (e: SemaException) {
+        System.err.println("error: ${e.message}")
+        return null
+    }
+    return emitFiles(program)
+}
+
+/**
+ * Emits one module per file from the whole-program view.
+ */
+private fun emitFiles(program: Ast.Program): List<CompiledFile>? {
+    val compiled = mutableListOf<CompiledFile>()
+    for (scope in program.files) {
+        val moduleEmitter = ModuleEmitter()
+        val moduleIr = moduleEmitter.emitFile(
+            Ast.Program(
+                globals = scope.globals,
+                functions = scope.functions,
+                imports = scope.imports,
+                resolved = program.resolved,
+                packageName = scope.packageName,
+            ),
+            scope.mangledPrefix,
+        )
+        compiled += CompiledFile(
+            sourceName = scope.fileName,
+            mangledPrefix = scope.mangledPrefix,
+            moduleIr = moduleIr,
+            initFnName = moduleEmitter.initFnName,
+        )
     }
     return compiled
 }
@@ -190,38 +232,6 @@ private fun writeIrFiles(compiled: List<CompiledFile>, dir: Path): List<Path> {
     Files.writeString(driverLl, DriverModule(IrBuilder()).emit(compiled))
     llFiles.add(driverLl)
     return llFiles
-}
-
-/** One file, in-process: read, parse, build the AST, type-check, emit IR. */
-private fun compileFile(input: Path): CompiledFile? {
-    val source = try {
-        input.readText()
-    } catch (e: IOException) {
-        System.err.println("error: cannot read $input")
-        return null
-    }
-    val diag = Diagnostics()
-    val tree = ParserFacade(diag).parse(source, input.fileName.toString())
-    if (tree == null) {
-        diag.messages.forEach { System.err.println(it) }
-        return null
-    }
-    val packageName = tree.preamble()?.packageHeader()?.identifier()?.text.orEmpty()
-    val fileName = input.fileName.toString().removeSuffix(".wtk").removeSuffix(".ktk")
-    val prefix = Mangler.mangle(packageName, fileName, "")
-    val program = try {
-        TypeChecker().check(AstBuilder().build(tree))
-    } catch (e: SemaException) {
-        System.err.println("error: ${e.message} (${input.fileName})")
-        return null
-    }
-    val moduleEmitter = ModuleEmitter()
-    return CompiledFile(
-        sourceName = input.fileName.toString(),
-        mangledPrefix = prefix,
-        moduleIr = moduleEmitter.emitFile(program, prefix),
-        initFnName = moduleEmitter.initFnName,
-    )
 }
 
 /** The default output: the first input's name with a `.prg` suffix. */

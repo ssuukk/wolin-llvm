@@ -9,6 +9,7 @@ import pl.qus.wolin.ast.Call
 import pl.qus.wolin.ast.CharLit
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FunctionLit
+import pl.qus.wolin.ast.GlobalDecl
 import pl.qus.wolin.ast.IfExpr
 import pl.qus.wolin.ast.IntLit
 import pl.qus.wolin.ast.NullLit
@@ -89,9 +90,13 @@ class ExprEmitter(
     private val constants: MutableList<String>,
     private val prefix: String,
     private val resolved: Map<VarRef, Symbol>,
+    /** The file's globals, so a function literal can see them. */
+    private val globals: List<GlobalDecl> = emptyList(),
 ) {
     private val floatConsts = LinkedHashMap<String, String>()
     private val stringConsts = LinkedHashMap<String, String>()
+    /** The function literals of this module, emitted after the functions. */
+    internal val lambda = LambdaEmitter(b, stmt, prefix)
 
     fun emit(e: Expr): IrValue = when (e) {
         is IntLit -> IrValue(e.value.toString(), TypeMapper.ir(e.type))
@@ -107,7 +112,7 @@ class ExprEmitter(
         is ArrayAccess -> emitArrayAccess(e)
         is Call -> emitCall(e)
         is IfExpr -> emitIfExpr(e)
-        is FunctionLit -> throw error("Function literals are not supported in v1 IR emission")
+        is FunctionLit -> emitFunctionLit(e)
     }
 
     // ---- literals ---------------------------------------------------------
@@ -144,7 +149,7 @@ class ExprEmitter(
     private fun emitVarRef(e: VarRef): IrValue {
         (resolved[e] as? Symbol.FunSymbol)?.let { symbol ->
             // A function name used as a value is its address, as a `uword`.
-            return b.instr(IrType.I16, "ptrtoint i8* @\"${prefix}.${symbol.decl.name}\" to i16")
+            return b.instr(IrType.I16, "ptrtoint i8* @\"${symbol.prefix}.${symbol.decl.name}\" to i16")
         }
         val ty = TypeMapper.ir(e.type)
         val addressed = e.type.kind == TypeKind.ARRAY || e.type.kind == TypeKind.STRING
@@ -441,12 +446,39 @@ class ExprEmitter(
 
     // ---- calls ---------------------------------------------------------------
 
+    /**
+     * Emits a function literal as its own module-level function and returns
+     * a pointer to it.
+     *
+     * The pointer is a `ptr`, the representation of a function-pointer-typed
+     * value: the literal is called through the pointer, not by name.
+     */
+    private fun emitFunctionLit(e: FunctionLit): IrValue {
+        val address = lambda.emit(e, globals)
+        return b.instr(IrType.Ptr, "inttoptr i64 ${address.name} to i8*")
+    }
+
     private fun emitCall(e: Call): IrValue {
         val callee = e.callee as? VarRef ?: throw error("Unsupported call target")
         val args = e.args.map { emit(it) }
         val retType = TypeMapper.ir(e.type)
         return when (val symbol = resolved[callee]) {
-            is Symbol.FunSymbol -> b.call(retType, "$prefix.${symbol.decl.name}", args)
+            is Symbol.FunSymbol -> b.call(retType, "${symbol.prefix}.${symbol.decl.name}", args)
+            // A function-pointer-typed variable holds the pointer itself, so
+            // the call goes through it directly.
+            is Symbol.DataSymbol -> {
+                if (symbol.type.kind != TypeKind.FUNCTION) {
+                    val address = emit(callee)
+                    val pointer = b.instr(
+                        IrType.Ptr,
+                        "inttoptr ${address.type.llvmName()} ${address.name} to i8*"
+                    )
+                    b.call(retType, pointer.name, args)
+                } else {
+                    val pointer = emit(callee)
+                    b.call(retType, pointer.name, args)
+                }
+            }
             // A `uword` holding a function address is called through
             // `inttoptr` — the address is a plain 16-bit number, so it is
             // converted back to a pointer before the call.

@@ -20,7 +20,33 @@ sealed interface Ast {
         val functions: List<FunDecl>,
         val imports: List<ImportDecl>,
         /** Which declaration each variable reference bound to. Filled by the checker. */
-        val resolved: MutableMap<VarRef, Symbol> = mutableMapOf()
+        val resolved: MutableMap<VarRef, Symbol> = mutableMapOf(),
+        /**
+         * The files the program is made of, in command-line order. Empty for
+         * a program built from a single file.
+         *
+         * The whole-program view keeps the files apart: a name from another
+         * package resolves only through an import, and each file's
+         * declarations are emitted into its own module.
+         */
+        val files: List<FileScope> = emptyList(),
+        /** The package the file declares, for a program built from one file. */
+        val packageName: String = "",
+    ) : Ast
+
+    /**
+     * One file's declarations inside the whole-program view.
+     *
+     * [mangledPrefix] is the prefix the file's symbols are emitted under:
+     * `<package>.<file>`, the same prefix the driver module uses.
+     */
+    data class FileScope(
+        val fileName: String,
+        val packageName: String,
+        val globals: List<GlobalDecl>,
+        val functions: List<FunDecl>,
+        val imports: List<ImportDecl>,
+        val mangledPrefix: String,
     ) : Ast
 
     data class ImportDecl(val path: String, val alias: String?) : Ast
@@ -71,7 +97,16 @@ sealed interface Ast {
     data class BinaryOp(val op: String, val left: Expr, val right: Expr, override var type: WolinType) : Expr
     data class Call(val callee: Expr, val args: List<Expr>, override var type: WolinType) : Expr
     data class Assign(val target: Expr, val value: Expr, override var type: WolinType, val op: String = "=") : Expr
-    data class FunctionLit(val params: List<String>, val body: List<Stmt>, override var type: WolinType) : Expr
+    data class FunctionLit(
+        val params: List<String>,
+        val body: List<Stmt>,
+        override var type: WolinType,
+        /**
+         * The parameter types, filled by the checker from the expected type at
+         * the literal's site. Empty until the literal is checked.
+         */
+        var paramTypes: List<WolinType> = emptyList(),
+    ) : Expr
 
     /** The statement types the checker walks. */
     data class LocalDecl(
@@ -168,3 +203,4 @@ typealias ArrayAccess = Ast.ArrayAccess
 typealias NullLit = Ast.NullLit
 typealias WhenEntry = Ast.WhenEntry
 typealias WhenStmt = Ast.WhenStmt
+typealias FileScope = Ast.FileScope
