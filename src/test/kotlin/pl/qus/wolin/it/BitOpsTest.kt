@@ -74,7 +74,7 @@ class BitOpsTest {
         assertEquals(0xF0, bytes[1].toInt() and 0xFF)
     }
 
-    @Test fun `xor precedence sits between the additive and the equality level`() {
+    @Test fun `xor precedence sits below the additive level`() {
         // a | b xor c & d must group as (a | b) xor (c & d) = 0x00.
         // The plausible wrong grouping a | (b xor (c & d)) yields 0x11.
         val bytes = runProgram("""

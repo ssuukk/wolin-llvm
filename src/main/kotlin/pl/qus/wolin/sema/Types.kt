@@ -15,7 +15,7 @@ data class WolinType(
         get() = kind == TypeKind.UBYTE || kind == TypeKind.BYTE ||
                 kind == TypeKind.UWORD || kind == TypeKind.WORD
 
-    /** True for the types that can be bit-manipulated with `&` and `|`. */
+    /** True for the types that can be bit-manipulated with `&`, `|` and `xor`. */
     val isBitwise: Boolean
         get() = isInteger
 
