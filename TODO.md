@@ -66,6 +66,13 @@ No plan yet. Each was deferred from v1 for the stated reason.
       is typed with `fits` (the signed range) rather than `fitsWidth` (the
       bit-pattern range, which the bit-assignment operators already use).
       Workaround: a negative literal (`w & -256`).
+- [ ] **A local declared inside an `if` *expression* branch has no stack
+      slot.** `var x = if (c) { var b: byte = -1; b } else { 0 }` aborts the
+      compiler with `IllegalStateException: Local b has no slot`: the
+      pre-scan (`StmtEmitter.collectLocalDecls`) reaches a `LocalDecl` only
+      as a statement, so the declaration inside an expression-position
+      `if` branch is never allocated. Pre-existing (reproduces on `main`);
+      found while landing the conversions.
 
 ## Rejected today — diagnostic catalogue, no date
 

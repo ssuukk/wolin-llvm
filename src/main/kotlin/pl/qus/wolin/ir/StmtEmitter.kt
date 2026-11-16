@@ -7,6 +7,7 @@ import pl.qus.wolin.ast.BreakStmt
 import pl.qus.wolin.ast.BlockStmt
 import pl.qus.wolin.ast.Call
 import pl.qus.wolin.ast.ContinueStmt
+import pl.qus.wolin.ast.Convert
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.ExprStmt
 import pl.qus.wolin.ast.ForeignGlobal
@@ -463,6 +464,7 @@ class StmtEmitter(private val b: IrBuilder) {
                 collectLocalDeclsInExpr(e.array, out)
                 collectLocalDeclsInExpr(e.index, out)
             }
+            is Convert -> collectLocalDeclsInExpr(e.value, out)
             else -> Unit
         }
     }

@@ -129,4 +129,15 @@ class GoldenIrTest {
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
         assertTrue(ir.contains("i8 44"), "the folded narrowing must truncate:\n$ir")
     }
+
+    @Test fun `a conversion around an if-expression keeps the branches' locals`() {
+        val src = """
+            fun f(c: bool): word {
+                return (if (c) { var b: byte = -1; b } else { var d: byte = 0; d }).toWord()
+            }
+            fun main() { while (true) {} }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("sext i8"), "the conversion must sign-extend:\n$ir")
+    }
 }
