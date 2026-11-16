@@ -1,6 +1,7 @@
 package pl.qus.wolin.ir
 
 import pl.qus.wolin.ast.BinaryOp
+import pl.qus.wolin.ast.Convert
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FixedAddress
 import pl.qus.wolin.ast.FixedArray
@@ -70,5 +71,6 @@ internal fun referencesAnotherEntity(e: Expr): Boolean = when (e) {
     is VarRef -> true
     is UnaryOp -> referencesAnotherEntity(e.operand)
     is BinaryOp -> referencesAnotherEntity(e.left) || referencesAnotherEntity(e.right)
+    is Convert -> referencesAnotherEntity(e.value)
     else -> false
 }

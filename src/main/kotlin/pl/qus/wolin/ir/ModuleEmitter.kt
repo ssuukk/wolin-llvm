@@ -6,6 +6,7 @@ import pl.qus.wolin.ast.BinaryOp
 import pl.qus.wolin.ast.BlockStmt
 import pl.qus.wolin.ast.Call
 import pl.qus.wolin.ast.CpuRegister
+import pl.qus.wolin.ast.Convert
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.ExprStmt
 import pl.qus.wolin.ast.FixedAddress
@@ -179,6 +180,7 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                     entry.body.forEach { collectStmtVarRefs(it, out) }
                 }
             }
+            is Convert -> collectVarRefs(expr.value, out)
             else -> Unit
         }
     }

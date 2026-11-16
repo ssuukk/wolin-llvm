@@ -109,4 +109,24 @@ class GoldenIrTest {
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
         assertTrue(ir.contains("i16 -1"), "the folded global must be the sign extension:\n$ir")
     }
+
+    @Test fun `a chained conversion folds to a constant`() {
+        val src = """
+            var b: byte = -1
+            var u: uword = b.toUbyte().toUword()
+            fun main() { while (true) {} }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("i16 255"), "the folded chain must be the zero extension:\n$ir")
+    }
+
+    @Test fun `a narrowing conversion folds to a constant`() {
+        val src = """
+            var w: word = 300
+            var b: byte = w.toByte()
+            fun main() { while (true) {} }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("i8 44"), "the folded narrowing must truncate:\n$ir")
+    }
 }

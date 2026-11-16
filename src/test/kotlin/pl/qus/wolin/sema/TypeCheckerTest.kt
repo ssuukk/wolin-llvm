@@ -232,4 +232,13 @@ class TypeCheckerTest {
         assertThrows<SemaException> { typeChecker("fun f() { var f: bool = true; var x = f.toByte() }") }
         assertThrows<SemaException> { typeChecker("fun f() { var s: string = \"\"; var x = s.toByte() }") }
     }
+
+    @Test fun `a conversion of a later global reports the ordering error`() {
+        // The ordering error must beat the plain "unknown variable" the
+        // reference check reports for the same name.
+        val e = assertThrows<SemaException> {
+            typeChecker("var w: word = b.toWord(); var b: byte = -1")
+        }
+        assertEquals("initialiser references a global that is not yet initialised", e.message)
+    }
 }

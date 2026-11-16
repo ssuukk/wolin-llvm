@@ -189,6 +189,7 @@ class TypeChecker {
                     entry.body.forEach { walkStmtVarRefs(it, out) }
                 }
             }
+            is Convert -> varRefs(expr.value, out)
             else -> Unit
         }
         return out
