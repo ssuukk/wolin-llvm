@@ -162,7 +162,7 @@ the old Wolin's Kotlin/ANTLR heritage is directly reusable.
 | Wolin type | LLVM type | Notes |
 |---|---|---|
 | `ubyte` | `i8` | primary 8-bit type |
-| `byte` | `i8` | signed interpretation is a v2 concern; v1 treats arithmetic modulo 256 |
+| `byte` | `i8` | **signed** two's complement, −128..127. Comparisons, `/` and `%` are signed; arithmetic wraps modulo 256. Literal range covers the whole domain (−128..127). |
 | `uword` / `word` | `i16` | 16-bit |
 | `bool` | `i1` | `i1` in IR; the backend materialises it in a register |
 | `unit` | `void` | |
@@ -390,12 +390,15 @@ as well.
 Arithmetic `+ - * / %`, comparison `== != < > <= >=`, logical `&& || !`, bitwise
 `& |`, `++`/`--` prefix and postfix, function literals as function pointers.
 
-**There is no XOR.** The old Wolin has no `xor` operator at all: no lexer token,
+**There is an XOR.** The old Wolin had no `xor` operator at all: no lexer token,
 no parser rule, no template. The bitwise operators it has are `&` (and), `|`
 (or), and the assignment forms `:=` (set bits), `.=` (clear bits), `&=`, `|=`.
-v1 keeps that set. Adding `xor` is a small, self-contained extension — the 6502
-has `EOR` and the LLVM IR is `xor i8` — but it is *new*, not a port, so it is
-listed in §12 as out of scope for v1 rather than silently assumed.
+`xor` is *new*, not a port: it is written as an infix call, `a xor b` — the
+Kotlin grammar already parses infix calls, so no grammar change was needed,
+and the analyser accepts the single name `xor` (any other infix call stays
+rejected). The 6502 has `EOR` and the LLVM IR is `xor i8`/`xor i16`; the
+constant folder folds `xor` in global initialisers. Implemented in
+`docs/superpowers/plans/2026-11-15-xor-signed-byte.md` (Task 1).
 
 **Array indexing type rules.** The old Wolin **always promotes the index to a word**,
 regardless of whether the array element type is `ubyte` or `uword`. The implementation
@@ -1575,9 +1578,14 @@ files still parse.
 
 - The v2 language features listed in §3 (exceptions, classes, capturing
   closures).
-- **The `xor` operator.** The old Wolin has none (§6), so adding it would be a
-  new feature rather than a port. It is a small addition — `EOR` on the 6502,
-  `xor i8` in the IR — and it belongs in v2.
+- ~~**The `xor` operator.**~~ **Implemented.** The old Wolin had none (§6), so
+  it was a new feature rather than a port: `EOR` on the 6502, `xor i8` in the
+  IR. Landed with the signed-byte work — see
+  `docs/superpowers/plans/2026-11-15-xor-signed-byte.md` (Task 1).
+- ~~**Signed `byte` semantics and explicit conversions.**~~ **Implemented.**
+  `byte` is signed two's complement over the full −128..127 literal range,
+  and `toByte()` / `toUbyte()` / `toWord()` / `toUword()` are the only way a
+  value changes integer type — same plan (Tasks 2 and 3).
 - **Double-precision floats.** `float` is single-precision IEEE-754; `double`
   would need a second soft-float ABI.
 - **A Wozniak-FFP ↔ IEEE-754 conversion helper.** v1 treats `float` as

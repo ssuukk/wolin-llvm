@@ -77,7 +77,7 @@ a name from another package resolves through an import.
 | Type | LLVM | Notes |
 |---|---|---|
 | `ubyte` | `i8` | the primary 8-bit type |
-| `byte` | `i8` | signed interpretation is a v2 concern; v1 arithmetic wraps modulo 256 |
+| `byte` | `i8` | signed two's complement, −128..127; comparisons, `/` and `%` are signed; arithmetic wraps modulo 256 |
 | `uword`, `word` | `i16` | 16-bit |
 | `bool` | `i1` | |
 | `float` | `float` | 4 bytes, IEEE-754 |
@@ -109,6 +109,17 @@ address, for the "continue with the ROM routine" idiom.
 
 Assignments: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, and the bit-assignment
 operators `:=` (or), `.=` (and), `&=`, `|=`.
+
+Bitwise expressions: `&`, `|`, `xor` — any integer type, no promotion.
+
+### Conversions
+
+The four explicit conversions: `toByte()`, `toUbyte()`, `toWord()`,
+`toUword()`. They are the only way a value changes integer type — there is
+no implicit promotion. A conversion to the same width reinterprets the bits
+(no code is emitted), a widening one sign- or zero-extends according to the
+source's signedness, and a narrowing one truncates. Conversions chain, so
+`b.toUbyte().toUword()` widens in two steps.
 
 ### Two things that differ from the old Wolin
 
