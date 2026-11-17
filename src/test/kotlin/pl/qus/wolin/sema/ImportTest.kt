@@ -88,6 +88,17 @@ class ImportTest {
         )
     }
 
+    @Test fun `a wildcard import of a package that does not exist is rejected`() {
+        assertFailsWith<SemaException> {
+            compileFiles(
+                listOf(
+                    SourceFile("lib.wtk", "package lib\nfun helper(): ubyte { return 7 }"),
+                    SourceFile("main.wtk", "package app\nimport missing.pkg.*\nfun main() { }"),
+                )
+            )
+        }
+    }
+
     @Test fun `an imported global is visible unqualified`() {
         val program = compileFiles(
             listOf(
