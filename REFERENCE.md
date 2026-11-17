@@ -63,7 +63,7 @@ var arr: ubyte[ubyte]^0x3000  // array at a fixed address
 val x: ubyte = 5              // cannot be assigned to
 fun f(a: ubyte, b: ubyte): ubyte { return a + b }
 fun f()                       // no return type = unit
-interrupt fun handler() { }   // 6502 interrupt handler, installed at startup
+interrupt fun handler() { }   // 6502 interrupt handler: exits with rti, not rts
 fun chrout^0xffd2(c: ubyte^CPU.A)   // fixed-address function: a ROM call (no body)
 ```
 
@@ -265,12 +265,51 @@ fun patch() {
 
 ### Interrupts
 
-`interrupt fun` is installed as a 6502 interrupt handler at program startup
-by the driver module.
+`interrupt fun` marks a function as a 6502 interrupt handler. The
+modifier's only effect is the function's exit: a normal exit emits `rti`
+(return from interrupt) instead of the usual `rts`. A 6502 interrupt
+handler was entered by the interrupt mechanism, not by a `jsr`, so it must
+return with `rti`.
+
+The backend emits a prologue and epilogue around the body that save and
+restore A, X, Y and the software stack pointer, so a handler may freely use
+the CPU registers and declare local variables.
+
+An `interrupt fun` may not take arguments and may not return a value:
+"Arguments not allowed for interrupt function!", "Return not allowed for
+interrupt function!".
+
+**Installing the handler.** The compiler does not install the handler; the
+program writes its address to an IRQ vector:
+
+```kotlin
+var irqVector: uword^0x0314 = 0
+irqVector = raster
+```
+
+Two vectors, two exit styles:
+
+- **$FFFE** (the hardware IRQ vector): the handler runs with only the CPU's
+  pushed status and return address on the stack, so its `rti` exit is
+  correct; the prologue's A/X/Y save/restore keeps the interrupted program
+  safe.
+- **$0314** (the KERNAL's IRQ vector): the KERNAL's IRQ entry ($FF48) has
+  already saved A, X, Y on the stack before `jmp ($0314)`, so a bare `rti`
+  would pop those saved registers instead of the return address. A handler
+  installed here must end with `return@0xea31`: the KERNAL's default IRQ
+  tail ($EA31 → $EA81) re-runs the KERNAL's own IRQ work (cursor blink, key
+  scan, jiffy clock), acknowledges the CIA1 interrupt, restores the saved
+  A, X, Y, and performs the final `rti`.
+
+**`return@<address>`** turns the exit into a `jmp <address>` instead of the
+`rti`. Inside a handler the standard form is `return@0xea31`; outside
+handlers it tail-jumps into fixed ROM code. A plain `return` still exits an
+`interrupt fun` with `rti`; statements after a `return` are dead code.
 
 ```kotlin
 interrupt fun raster() {
-    var border: ubyte^0xd020 = 3
+    // ... do the handler's work ...
+    return@0xea31   // jmp $EA31: the KERNAL finishes the IRQ
 }
 ```
 

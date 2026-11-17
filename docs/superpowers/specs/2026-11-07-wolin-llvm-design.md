@@ -280,11 +280,14 @@ nothing:
 This is a strict improvement, and it cannot break the old corpus: no old example
 uses `val` for something it later mutates.
 
-**No local variables in interrupt functions.** The old Wolin rejected this outright
-(`InterruptFunctionWithLocals`: "Local variables are not allowed in interrupt
-functions!"), because an interrupt can fire at any point and would have to save and
-restore an arbitrary number of locals. v1 keeps this restriction — it is a real
-constraint of the 6502, not an arbitrary limitation.
+**Interrupt functions: no arguments and no return value; locals are fine.** The old
+Wolin rejected arguments and a return type ("Arguments not allowed for interrupt
+function!", "Return not allowed for interrupt function!"); v1 keeps both checks.
+It also rejected locals (`InterruptFunctionWithLocals`: "Local variables are not
+allowed in interrupt functions!"), because its handlers had no register or stack
+prologue to protect them. v1 allows locals: the backend's prologue saves and
+restores A, X, Y and the software stack pointer, so an interrupt firing
+mid-function cannot corrupt them.
 
 ### Functions
 

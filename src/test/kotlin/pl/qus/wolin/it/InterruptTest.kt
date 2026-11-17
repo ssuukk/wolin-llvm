@@ -1,7 +1,14 @@
 package pl.qus.wolin.it
 
+import pl.qus.wolin.ast.Ast
+import pl.qus.wolin.driver.Diagnostics
+import pl.qus.wolin.parser.ParserFacade
+import pl.qus.wolin.sema.AstBuilder
+import pl.qus.wolin.sema.SemaException
+import pl.qus.wolin.sema.TypeChecker
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -69,4 +76,44 @@ class InterruptTest {
         """)
         assertEquals(99, bytes[0].toInt() and 0xFF)
     }
+
+    /**
+     * An `interrupt fun` cannot take arguments: the KERNAL's IRQ entry pushes
+     * nothing for a handler to read.
+     */
+    @Test fun `an interrupt function with arguments is rejected`() {
+        val e = assertFailsWith<SemaException> {
+            compile("""
+                interrupt fun handler(a: ubyte) {
+                }
+                fun main() { }
+            """)
+        }
+        assertTrue(
+            e.message!!.contains("Arguments not allowed for interrupt function!"),
+            "message should name the arguments restriction, got: ${e.message}",
+        )
+    }
+
+    /**
+     * An `interrupt fun` cannot return a value: the exit is `rti`, which has
+     * no register to hand a result back in.
+     */
+    @Test fun `an interrupt function with a return type is rejected`() {
+        val e = assertFailsWith<SemaException> {
+            compile("""
+                interrupt fun handler(): ubyte {
+                    return 1
+                }
+                fun main() { }
+            """)
+        }
+        assertTrue(
+            e.message!!.contains("Return not allowed for interrupt function!"),
+            "message should name the return restriction, got: ${e.message}",
+        )
+    }
+
+    private fun compile(src: String): Ast.Program =
+        TypeChecker().check(AstBuilder().build(ParserFacade(Diagnostics()).parse(src, "t.ktk")!!))
 }

@@ -222,6 +222,14 @@ class TypeChecker {
     }
 
     private fun checkFunction(fn: FunDecl, globals: Scope) {
+        if (fn.isInterrupt) {
+            if (fn.params.isNotEmpty()) {
+                throw SemaException("Arguments not allowed for interrupt function!")
+            }
+            if (fn.retType != null) {
+                throw SemaException("Return not allowed for interrupt function!")
+            }
+        }
         val outer = scope
         val functionScope = globals.child()
         scope = functionScope
