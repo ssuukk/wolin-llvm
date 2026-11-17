@@ -98,4 +98,4 @@ Nothing below has a plan; several are unlikely to ever be implemented.
       other than `xor` (`a and b`, `a shl b`, …).
 - **Imports:** `import … as <alias>`.
 - **Coroutines:** suspend.
-- **Double:** double precission types
+- **Double:** double precision types
