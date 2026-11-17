@@ -376,6 +376,36 @@ fun main() {
 - Global initialisation order is command-line order, same-package files
   first.
 
+## Standard library
+
+Two files ship in `stdlib/`; pass them on the command line before your own
+files:
+
+```
+wolinc stdlib/c64-kernal.wtk stdlib/std.wtk myprog.wtk -o myprog.prg
+```
+
+- `c64-kernal.wtk` (`package c64.kernal`) — kernal entry points as
+  fixed-address declarations: `chrout^0xffd2(c: ubyte^CPU.A)` outputs the
+  byte in A.
+- `std.wtk` (`package wolin`) — Wolin built on the kernal:
+  `print(x: string)` writes every byte up to the NUL terminator through
+  `chrout`. Use `\r` (`0x0D`) in the string for a screen newline.
+
+```wtk
+package app
+import wolin.print
+fun main() { print("hi") }
+```
+
+`print` indexes with a `ubyte`, so a string longer than 255 bytes wraps
+the index and prints forever; that is the v1 limit on all string
+indexing. Kernal routines that return a value in A cannot be declared
+yet (see `TODO.md`). String bytes go out as written: screen codes are
+PETSCII, not ASCII, and the kernal forces case with the shift state off
+(lowercase input lands uppercase) — converting source strings to PETSCII
+is a known gap (see `TODO.md`).
+
 ## Diagnostics
 
 Errors are `SemaException`s with a message that names the problem:

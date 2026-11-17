@@ -80,6 +80,19 @@ No plan yet. Each was deferred from v1 for the stated reason.
       reject such a mask is `TypeChecker.maskLiteral`, which sees only a
       literal or a negated literal, so a non-literal mask skips it.
 
+- [ ] **A fixed-address function with a return type crashes the compiler.**
+      `emitFixedFunction` (ModuleEmitter.kt:264) ends in `ret(null)`, and
+      `IrBuilder.ret` asserts the function returns void
+      (IrBuilder.kt:183–186), so a kernal routine that returns a value in
+      A — e.g. `readst^0xffc7(): ubyte` — cannot be declared. Blocks the
+      stdlib kernal file from growing past void functions.
+
+- [ ] **Source strings are not converted to PETSCII.** String literals stay
+      ASCII (UTF-8 source) and `print` sends the raw bytes to CHROUT, which
+      forces case with the shift state off — lowercase input lands uppercase
+      on screen (`print("hi")` prints `HI`). Convert ASCII/UTF-8 source
+      strings to PETSCII at compile time.
+
 ## Rejected today — diagnostic catalogue, no date
 
 The grammar is the full Kotlin grammar, so almost everything parses; the
