@@ -68,6 +68,26 @@ class ImportTest {
         assertTrue(symbol is Symbol.FunSymbol, "helper() must bind to lib's function, got $symbol")
     }
 
+    @Test fun `a wildcard import of a multi-segment package brings a name into scope`() {
+        val program = compileFiles(
+            listOf(
+                SourceFile("kernal.wtk", "package c64.kernal\nfun helper(): ubyte { return 7 }"),
+                SourceFile(
+                    "main.wtk",
+                    "package app\nimport c64.kernal.*\nfun main() { val x = helper() }"
+                ),
+            )
+        )
+        val call = findCall(program)
+        assertTrue(call != null, "the call to helper() must be in the program")
+        val callee = call!!.callee as Ast.VarRef
+        val symbol = program.resolved[callee]
+        assertTrue(
+            symbol is Symbol.FunSymbol,
+            "helper() must bind to the kernal package's function, got $symbol"
+        )
+    }
+
     @Test fun `an imported global is visible unqualified`() {
         val program = compileFiles(
             listOf(

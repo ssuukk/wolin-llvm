@@ -93,9 +93,17 @@ class TypeChecker {
             if (import.alias != null) {
                 throw SemaException("import aliases are not supported in v1")
             }
-            val path = import.path.removeSuffix(".*")
-            val imported = path.substringAfterLast('.')
-            if (imported.isEmpty() || imported == path) return@forEach
+            if (import.path.endsWith(".*")) {
+                // A wildcard import is valid when the package exists; the
+                // names it brings resolve at the use site.
+                val packageName = import.path.removeSuffix(".*")
+                if (program.files.none { it.packageName == packageName }) {
+                    throw SemaException("Cannot resolve import ${import.path}")
+                }
+                return@forEach
+            }
+            val imported = import.path.substringAfterLast('.')
+            if (imported.isEmpty() || imported == import.path) return@forEach
             val symbol = importResolver.resolve(imported, listOf(import), program)
                 ?: throw SemaException("Cannot resolve import ${import.path}")
             globals.declare(imported, symbol)
