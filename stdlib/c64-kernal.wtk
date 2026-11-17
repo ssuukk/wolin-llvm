@@ -1,0 +1,4 @@
+package c64.kernal
+
+// CHROUT ($FFD2): output the byte in A as a character.
+fun chrout^0xffd2(c: ubyte^CPU.A)

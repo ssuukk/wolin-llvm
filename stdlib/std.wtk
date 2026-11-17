@@ -1,0 +1,14 @@
+package wolin
+
+import c64.kernal.*
+
+// Write [x] to the screen: every byte up to the NUL terminator goes
+// through CHROUT. The index is a ubyte, so strings are capped at 255
+// bytes (the v1 limit on string indexing in general).
+fun print(x: string) {
+    var i: ubyte = 0
+    while (x[i] != 0) {
+        chrout(x[i])
+        i++
+    }
+}
