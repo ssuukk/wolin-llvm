@@ -136,4 +136,12 @@ class UnsupportedTest {
     @Test fun `a conversion call with arguments stays rejected`() {
         assertRejected("fun f() { var b: byte = 1; var x = b.toWord(2) }")
     }
+
+    @Test fun `a safe call on a conversion stays rejected`() {
+        assertRejected("fun f(b: byte): word { return b?.toWord() }")
+    }
+
+    @Test fun `a conversion with a trailing lambda stays rejected`() {
+        assertRejected("fun f(b: byte): word { return b.toWord { var q = 7 } }")
+    }
 }

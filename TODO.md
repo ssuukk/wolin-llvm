@@ -73,6 +73,16 @@ No plan yet. Each was deferred from v1 for the stated reason.
       as a statement, so the declaration inside an expression-position
       `if` branch is never allocated. Pre-existing (reproduces on `main`);
       found while landing the conversions.
+- [ ] **A bit-assignment from a wider integer emits invalid IR.** `x := g`
+      with `x: ubyte` and `g: uword` emits `zext i16 %g to i8` (and
+      `sext i16 %g to i8` for a signed `word`), which LLVM rejects — a
+      `zext`/`sext` may not narrow. `ExprEmitter.widenIfNeeded` picks the
+      direction from the source's signedness without checking the widths, so
+      a narrowing bit-assignment takes the widening path. Pre-existing
+      (reproduces on `main` with no conversion in the program); the
+      conversions add one more route to it. The range check that would
+      reject such a mask is `TypeChecker.maskLiteral`, which sees only a
+      literal or a negated literal, so a non-literal mask skips it.
 
 ## Rejected today — diagnostic catalogue, no date
 

@@ -82,6 +82,15 @@ class GoldenIrTest {
         assertTrue(ir.contains("xor i8"), ir)
     }
 
+    @Test fun `a xor in a global initialiser folds to a constant`() {
+        val src = """
+            var c: ubyte = 0x0F xor 0xF0
+            fun main() { while (true) {} }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("i8 255"), "the folded xor must be the bitwise result:\n$ir")
+    }
+
     @Test fun `conversions emit the right extension instruction`() {
         val src = """
             fun f(): uword {

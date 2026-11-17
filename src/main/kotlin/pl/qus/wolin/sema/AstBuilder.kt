@@ -285,14 +285,15 @@ class AstBuilder {
      * `b.toWord()` and friends: a dot call of one of the four conversion names
      * with no arguments and no type arguments, possibly chained
      * (`b.toUbyte().toUword()`). Anything else — other names, arguments, type
-     * arguments, a non-identifier callee, any other postfix operation on the
-     * callee — is not a conversion and returns null, so the caller rejects it
-     * as member access.
+     * arguments, a trailing lambda, a safe call (`?.`), a non-identifier
+     * callee, any other postfix operation on the callee — is not a conversion
+     * and returns null, so the caller rejects it as member access.
      */
     private fun buildConversion(value: Expr, operation: KotlinParser.PostfixUnaryOperationContext): Convert? {
         var current = value
         var op = operation
         while (true) {
+            if (op.memberAccessOperator()?.text != ".") return null
             val inner = op.postfixUnaryExpression() ?: return null
             val name = inner.atomicExpression().simpleIdentifier()?.text ?: return null
             val target = when (name) {
@@ -306,13 +307,12 @@ class AstBuilder {
             val call = ops.firstOrNull()?.callSuffix() ?: return null
             if (call.typeArguments() != null) return null
             if (call.valueArguments()?.valueArgument().orEmpty().isNotEmpty()) return null
+            if (call.annotatedLambda().isNotEmpty()) return null
             current = Convert(current, target, Types.unit)
             val rest = ops.subList(1, ops.size)
             if (rest.isEmpty()) return current
             if (rest.size != 1) return null
-            val next = rest.first()
-            if (next.memberAccessOperator() == null) return null
-            op = next
+            op = rest.first()
         }
     }
 

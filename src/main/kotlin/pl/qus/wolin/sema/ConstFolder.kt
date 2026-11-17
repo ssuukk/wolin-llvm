@@ -102,7 +102,7 @@ object ConstFolder {
             width(e.to) == 16 && width(v.type) == 8 -> if (signed) (src shl 24) shr 24 else src
             else -> src
         }
-        return ConstValue.IntValue(bits, e.to)
+        return ConstValue.IntValue(mask(bits, e.to), e.to)
     }
 
     /**
