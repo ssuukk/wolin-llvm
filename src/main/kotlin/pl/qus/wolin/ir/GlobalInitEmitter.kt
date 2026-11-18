@@ -32,9 +32,17 @@ class GlobalInitEmitter(private val b: IrBuilder) {
         val fnName = "__wolin_init_file_$mangledName"
         b.startFunction(fnName, IrType.Void, emptyList())
         for (g in program.globals) {
-            if (g.init == null || g.constValue == null) continue
-            if (g.location is FixedAddress || g.location is FixedArray) continue
-            if (!referencesAnotherEntity(g.init)) continue
+            val init = g.init
+            if (init == null || g.constValue == null) continue
+            if (g.location is FixedAddress) continue
+            if (g.location is FixedArray) {
+                val v = g.constValue
+                if (v is ConstValue.ArrayValue && v.elements.isNotEmpty()) {
+                    storeArray(g, v, mangledName)
+                }
+                continue
+            }
+            if (!referencesAnotherEntity(init)) continue
             store(g, mangledName)
         }
         b.ret(null)
@@ -56,6 +64,23 @@ class GlobalInitEmitter(private val b: IrBuilder) {
                 b.instr(IrType.Void, "store i16 ${addr.name}, $target")
             }
             else -> b.instr(IrType.Void, "store ${TypeMapper.ir(g.type).llvmName()} ${v!!.spelling}, $target")
+        }
+    }
+
+    /**
+     * A fixed-address global array: store each element to
+     * `address + i × elementSize`. The stores are volatile, like every
+     * other fixed-address store.
+     */
+    private fun storeArray(g: GlobalDecl, v: ConstValue.ArrayValue, mangledName: String) {
+        val address = (g.location as FixedArray).address
+        val ty = TypeMapper.ir(v.elementType)
+        v.elements.forEachIndexed { i, elem ->
+            val target = b.instr(
+                IrType.Ptr,
+                "inttoptr i64 ${address + i * if (ty == IrType.I16) 2 else 1} to ${ty.llvmName()}*"
+            )
+            b.instr(IrType.Void, "store volatile ${ty.llvmName()} ${elem.spelling}, ptr ${target.name}")
         }
     }
 }

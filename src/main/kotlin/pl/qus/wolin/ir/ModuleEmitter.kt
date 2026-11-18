@@ -26,6 +26,7 @@ import pl.qus.wolin.ast.WhenExpr
 import pl.qus.wolin.ast.WhenStmt
 import pl.qus.wolin.ast.WhileStmt
 import pl.qus.wolin.sema.Symbol
+import pl.qus.wolin.sema.ConstValue
 import pl.qus.wolin.sema.TypeKind
 import pl.qus.wolin.sema.Types
 import pl.qus.wolin.sema.WolinType
@@ -101,10 +102,14 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 continue
             }
             if (g.type.kind == TypeKind.ARRAY) {
-                if (g.init != null) throw error("Global array ${g.name} must be zero-initialised in v1")
                 val ety = g.type.elementType ?: throw error("Array ${g.name} has no element type")
-                constants +=
-                    "@\"$prefix.${g.name}\" = global [${arrayCount(g.type)} x ${TypeMapper.ir(ety).llvmName()}] zeroinit"
+                val count = arrayCount(g.type)
+                val ty = TypeMapper.ir(ety).llvmName()
+                val body = when (val v = g.constValue) {
+                    is ConstValue.ArrayValue -> if (v.elements.isNotEmpty()) v.spelling else "zeroinit"
+                    else -> "zeroinit"
+                }
+                constants += "@\"$prefix.${g.name}\" = global [$count x $ty] $body"
                 continue
             }
             // A pure-literal initialiser is static data; one that references
@@ -243,6 +248,10 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
      *
      * Each parameter's `^CPU.X` annotation says which register the argument
      * arrives in, and the constraint list follows the declaration order.
+     *
+     * A return type's `^CPU.X` annotation says which register the result
+     * arrives in: the body loads it and returns it, so the call site gets
+     * the value as an ordinary SSA value.
      */
     private fun emitFixedFunction(
         fn: pl.qus.wolin.ast.FunDecl,
@@ -261,7 +270,18 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             params[index] to register
         }
         ExternalCalls().emitCall(b, address, args)
-        b.ret(null)
+        val resultRegister = (fn.retLocation as? CpuRegister)?.name
+        if (resultRegister == null) {
+            b.ret(null)
+        } else {
+            val retType = fn.retType
+            val result = when {
+                retType != null && retType.kind == TypeKind.UWORD ->
+                    CpuAccessors.readRegisterPair(b, resultRegister)
+                else -> CpuAccessors.readRegister(b, resultRegister)
+            }
+            b.ret(result)
+        }
         b.endFunction()
     }
 

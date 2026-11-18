@@ -1,0 +1,6 @@
+var pattern: ubyte[ubyte] = [12, 12, 13]
+var empty: ubyte[ubyte] = []
+
+fun main() {
+    while (true) {}
+}

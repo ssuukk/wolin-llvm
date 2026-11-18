@@ -1,6 +1,9 @@
 package pl.qus.wolin.ir
 
 import pl.qus.wolin.ast.ArrayAccess
+import pl.qus.wolin.ast.ArrayLiteral
+import pl.qus.wolin.ast.IntLit
+import pl.qus.wolin.ast.StringLit
 import pl.qus.wolin.ast.Assign
 import pl.qus.wolin.ast.BinaryOp
 import pl.qus.wolin.ast.BreakStmt
@@ -185,7 +188,7 @@ class StmtEmitter(private val b: IrBuilder) {
                 vars.declare(d.name, VarStorage.Fixed(loc.address))
             }
             is FixedArray -> {
-                if (d.init != null) throw error("fixed array locals take no initialiser")
+                d.init?.let { init -> emitArrayInit(init, loc.address, d.type) }
                 vars.declare(d.name, VarStorage.Fixed(loc.address))
             }
             else -> {
@@ -196,6 +199,28 @@ class StmtEmitter(private val b: IrBuilder) {
                 }
                 vars.declare(d.name, VarStorage.Local(ptr))
             }
+        }
+    }
+
+    /**
+     * The per-element stores of an array initialiser on a fixed-address
+     * local. The checker has already typed every element and rewritten a
+     * string initialiser into byte elements, so each element is an
+     * [IntLit] / [BoolLit] / [RealLit] / [UnaryOp] / [BinaryOp] / [Convert]
+     * / [VarRef] / [Call] — any expression the ExprEmitter can evaluate.
+     */
+    private fun emitArrayInit(init: Expr, address: Int, type: WolinType) {
+        val ety = type.elementType ?: throw error("Array ${type} has no element type")
+        val ity = TypeMapper.ir(ety)
+        val elemSize = if (ity == IrType.I16) 2 else 1
+        val elements: List<Expr> = when (init) {
+            is ArrayLiteral -> init.elements
+            is StringLit -> init.bytes.map { IntLit(it.toLong(), ety) } + IntLit(0, ety)
+            else -> throw error("fixed array locals take no initialiser")
+        }
+        elements.forEachIndexed { i, e ->
+            val v = expr.emit(e)
+            expr.emitStoreFixed(address + i * elemSize, v, ity)
         }
     }
 
