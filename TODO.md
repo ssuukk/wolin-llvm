@@ -7,14 +7,41 @@ scope), the diagnostic catalogue in `UnsupportedTest`, and a code audit of
 
 ## This cycle — landed
 
-Implemented 2026-11-16; plan: `docs/superpowers/plans/2026-11-15-xor-signed-byte.md`.
+### 2026-11-17 — array initialisers
+
+Design: `docs/superpowers/specs/2026-11-17-array-initialiser-design.md`.
+
+- [x] A global, global fixed-address, or local fixed-address array
+      declaration can initialise itself from a `[v, v, …]` list literal or,
+      for `ubyte`-element arrays, from a string literal. Prefix fill;
+      remainder zero.
+- [x] Global initialisers must be constant expressions (elements fold via
+      `ConstFolder`); local fixed-address initialisers may use runtime
+      expressions, stored at function entry.
+- [x] `[]` is legal = zero-init. No trailing comma.
+
+### 2026-11-17 — kernal routines return a value
+
+Design: `docs/superpowers/specs/2026-11-17-kernal-return-values-design.md`.
+
+- [x] A fixed-address function can declare a return type; the wrapper
+      reads the result from the named CPU register right after the ROM
+      call. `ubyte` in `^CPU.A`/`^CPU.X`/`^CPU.Y`; `uword` in the pair
+      `^CPU.AX` (A low, X high) or `^CPU.XY` (X low, Y high).
+- [x] CPU register variables (`var x: T^CPU.REG`) are rejected by the
+      checker in v1 — no register storage in v1; the register IR plumbing
+      was reverted. Follow-up: re-land the accessors when register
+      variables are wanted.
+
+### 2026-11-16 — signed byte and conversions
+
+Plan: `docs/superpowers/plans/2026-11-15-xor-signed-byte.md`.
 
 - [x] `xor` operator (`a xor b`) — Task 1
 - [x] Signed `byte` semantics: `byte` literals cover the full −128..127 range
       — Task 2
 - [x] Explicit integer conversions `toByte()` / `toUbyte()` / `toWord()` /
       `toUword()` — Task 3
-
 ## Design-level v2 items (spec §3 and §12)
 
 No plan yet. Each was deferred from v1 for the stated reason.
@@ -79,13 +106,6 @@ No plan yet. Each was deferred from v1 for the stated reason.
       conversions add one more route to it. The range check that would
       reject such a mask is `TypeChecker.maskLiteral`, which sees only a
       literal or a negated literal, so a non-literal mask skips it.
-
-- [ ] **A fixed-address function with a return type crashes the compiler.**
-      `emitFixedFunction` (ModuleEmitter.kt:264) ends in `ret(null)`, and
-      `IrBuilder.ret` asserts the function returns void
-      (IrBuilder.kt:183–186), so a kernal routine that returns a value in
-      A — e.g. `readst^0xffc7(): ubyte` — cannot be declared. Blocks the
-      stdlib kernal file from growing past void functions.
 
 - [ ] **Source strings are not converted to PETSCII.** String literals stay
       ASCII (UTF-8 source) and `print` sends the raw bytes to CHROUT, which

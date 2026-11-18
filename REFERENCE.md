@@ -192,8 +192,42 @@ var v: ubyte = arr[3]
 - `uword`-element arrays are scaled by the GEP; `ubyte` arrays are not.
 - Global arrays without a fixed address are zero-initialised in the data
   section; their size is the index type's domain (`ubyte` → 256, `uword` →
-  65536). Initialising a global array is an error in v1.
-- Strings index like arrays of `ubyte`.
+  65536).
+
+### Array initialisers
+
+A declaration may give an array its values with a list literal or, for
+`ubyte`-element arrays, with a string.
+
+```kotlin
+var pattern: ubyte[ubyte] = [12, 12, 12, 13]          // global, data section
+var screen: ubyte[ubyte]^0x0400 = [176, 176]          // global, fixed address
+var w: uword[uword] = [0, 1024, 0x3000]               // 16-bit elements
+var line: ubyte[ubyte] = "HI\r\n"                     // 4 bytes + NUL
+var empty: ubyte[ubyte] = []                          // explicit zero-fill
+
+fun main() {
+    var local: ubyte[ubyte]^0x2000 = [a + 1, 7]       // local fixed address
+    while (true) {}
+}
+```
+
+- **Prefix fill.** Element *i* of the list goes to index *i*; the rest of
+  the array stays zero. The list does not name the array's length.
+- **Constant rule (globals).** Every element of a global array initialiser
+  must fold at compile time; an element that does not (a function address,
+  a non-constant expression) is a compile error.
+- **Local fixed-address arrays** may use arbitrary runtime expressions;
+  the values are stored at function entry.
+- **String initialisers** (`ubyte`-element arrays only): the string's bytes
+  plus the NUL terminator, prefix fill, remainder zero.
+- **Count check.** The list (or string + NUL) may not exceed the index
+  type's domain; longer lists are a compile error.
+- **Accepted positions:** global array initialiser (constant elements),
+  global fixed-address array initialiser (constant elements), local
+  fixed-address array initialiser (runtime expressions). Anywhere else —
+  `var x = [1, 2]` with no declared type, `arr = [1, 2]` in assignment
+  position, a call argument — is a compile error.
 
 ## Fixed addresses and hardware
 
@@ -213,7 +247,10 @@ fun main() {
 
 ### CPU registers
 
-`var x: T^CPU.REG` aliases a 6502 register.
+In v1 a variable cannot live in a CPU register: `var x: ubyte^CPU.X` is
+rejected by the checker. Registers only appear in ROM call signatures,
+where a parameter or return value names the register it passes through
+(see [ROM calls](#rom-calls)).
 
 | Register | Type |
 |---|---|
@@ -221,33 +258,34 @@ fun main() {
 | `CPU.C` `CPU.I` `CPU.N` `CPU.Z` | `bool` (flags) |
 | `CPU.AX` `CPU.XY` | `uword` (16-bit pairs) |
 
-Reading a flag uses a status-preserving sequence: `CPU.C` leaves A and P
-intact.
-
-```kotlin
-var carry: bool^CPU.C
-var ax: uword^CPU.AX
-
-fun main() {
-    ax = 1000
-    carry = true        // sets the carry flag
-}
-```
-
 ### ROM calls
 
 A function declared with a fixed address and **no body** is a ROM (or any
-fixed-address) routine; its parameters may declare which register they arrive
-in.
+fixed-address) routine. Every parameter must name the single register it
+arrives in. A return type names the register — or register pair — the
+result comes back in.
 
 ```kotlin
 fun chrout^0xffd2(c: ubyte^CPU.A)
 fun setLfs^0xffba(lfn: ubyte^CPU.A, channel: ubyte^CPU.Y, dev: ubyte^CPU.X)
+fun readst^0xffb7(lfn: ubyte^CPU.A, channel: ubyte^CPU.Y, dev: ubyte^CPU.X): ubyte^CPU.A
 
 fun main() {
     chrout('A')
-    setLfs(0, 0, 8)     // LFS to drive 8
+    setLfs(0, 0, 8)          // LFS to drive 8
+    val status = readst(0, 0, 8)
 }
+```
+
+A return type is a `ubyte` in a single register, or a `uword` in a
+register pair. A pair lists its registers low byte first: `CPU.AX` reads
+A as the low byte and X as the high byte; `CPU.XY` reads X as the low
+byte and Y as the high byte, the layout the C64 kernal leaves 16-bit
+results in.
+
+```kotlin
+fun membot^0xff9c(): uword^CPU.XY   // bottom of memory: X low, Y high
+fun rdtim^0xffde(): uword^CPU.AX    // RDTIM: A low, X high
 ```
 
 ### `return@<address>`
@@ -378,11 +416,11 @@ fun main() {
 
 ## Standard library
 
-Two files ship in `stdlib/`; pass them on the command line before your own
-files:
+Three files ship in `stdlib/`; pass the ones you use on the command
+line before your own files:
 
 ```
-wolinc stdlib/c64-kernal.wtk stdlib/std.wtk myprog.wtk -o myprog.prg
+wolinc stdlib/c64-kernal.wtk stdlib/std.wtk stdlib/vic.wtk myprog.wtk -o myprog.prg
 ```
 
 - `c64-kernal.wtk` (`package c64.kernal`) — kernal entry points as
@@ -391,14 +429,24 @@ wolinc stdlib/c64-kernal.wtk stdlib/std.wtk myprog.wtk -o myprog.prg
 - `std.wtk` (`package wolin`) — Wolin built on the kernal:
   `print(x: string)` writes every byte up to the NUL terminator through
   `chrout`. Use `\r` (`0x0D`) in the string for a screen newline.
+- `vic.wtk` (`package c64.vic`) — the VIC-II register map ($d000-$d02f) as
+  fixed-address `ubyte` windows: `sprite0X`…`sprite7Y` (sprite
+  coordinates), `rasterCounter`, `screenAddressHigh`/`screenAddressLow`,
+  `interruptStatus`/`interruptEnable`, `borderColor`,
+  `backgroundColor0`–`backgroundColor3`, `spriteColor0`–`spriteColor7`
+  and friends. A read fetches the register, a write stores it; the two
+  read-only collision registers are declared `val`.
 
 ```wtk
 package app
 import wolin.print
 fun main() { print("hi") }
 ```
-
 `print` indexes with a `ubyte`, so a string longer than 255 bytes wraps
+the index and prints forever; that is the v1 limit on all string
+indexing. A kernal routine that returns a value declares the register
+the result comes back in: `readst^0xffb7(): ubyte^CPU.A` (see
+[ROM calls](#rom-calls)). String bytes go out as written: screen codes are
 the index and prints forever; that is the v1 limit on all string
 indexing. Kernal routines that return a value in A cannot be declared
 yet (see `TODO.md`). String bytes go out as written: screen codes are
@@ -420,7 +468,12 @@ Errors are `SemaException`s with a message that names the problem:
 | `Cannot assign to val X` | assignment to a `val` |
 | `The else branch of a when must be last` | `else` not in the final position |
 | `when condition type X does not match subject type Y` | subject-form `when` with a mismatched condition |
-| `Global array X must be zero-initialised in v1` | a global array with an initialiser |
+| `Array literal needs an array type` | `var x = [1, 2]` with no declared array type |
+| `Array literal can only initialise a declaration` | an array literal in assignment or expression position |
+| `Too many array elements` (with the count and the domain) | a list longer than the index type's domain |
+| `String initialiser needs a ubyte element type` | a string initialiser on a `uword`-element array |
+| `String initialiser too long` (with the length and the domain) | a string whose bytes + NUL exceed the index domain |
+| `local arrays need a fixed address in v1` | an array initialiser on a local non-fixed array |
 
 ## Semantics notes — where v1 differs from the old Wolin
 
