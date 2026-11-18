@@ -47,4 +47,52 @@ sealed interface ConstValue {
     data class FunctionValue(val name: String, val prefix: String = "") : ConstValue {
         override val spelling: String = ""
     }
+
+    /**
+     * An array's constant elements, each already folded.
+     *
+     * [spelling] is the full-domain LLVM constant-array body:
+     * `[i8 12, i8 13, i8 0, …]` — padded to the index type's domain
+     * with per-element-type zero spellings.
+     */
+    /**
+     * A constant array: the elements a global array initialiser folds to,
+     * padded with zeros to the full index-type domain. The [spelling] is the
+     * LLVM constant-array body (`[i8 12, i8 0, …]`), ready to be placed after
+     * the array type in a `@"… = global [N x T] …"` line.
+     *
+     * Each element is prefixed with its LLVM type name (`i8`, `i16`, `i1`,
+     * `float`); the type name is spelled from the element [WolinType]'s kind
+     * so the sema package does not depend on the `ir` package.
+     */
+    data class ArrayValue(
+        val elements: List<ConstValue>,
+        val elementType: WolinType,
+        val indexType: WolinType,
+    ) : ConstValue {
+        override val spelling: String
+            get() {
+                val ty = llvmName(elementType)
+                val domain = if (indexType.kind == TypeKind.UWORD || indexType.kind == TypeKind.WORD) 65536 else 256
+                val padded = elements + List(domain - elements.size) { zeroFor(elementType) }
+                return "[" + padded.joinToString(", ") { "$ty ${it.spelling}" } + "]"
+            }
+    }
+
+}
+
+/** The LLVM spelling of a Wolin type's IR type, spelled without importing `ir`. */
+internal fun llvmName(t: WolinType): String = when (t.kind) {
+    TypeKind.UBYTE, TypeKind.BYTE -> "i8"
+    TypeKind.UWORD, TypeKind.WORD -> "i16"
+    TypeKind.BOOL -> "i1"
+    TypeKind.FLOAT -> "float"
+    else -> throw IllegalArgumentException("Array element type $t has no LLVM spelling")
+}
+
+/** The zero value of [t] in its LLVM spelling. */
+internal fun zeroFor(t: WolinType): ConstValue = when (t.kind) {
+    TypeKind.FLOAT -> ConstValue.FloatValue(0.0)
+    TypeKind.BOOL -> ConstValue.BoolValue(false)
+    else -> ConstValue.IntValue(0, t)
 }

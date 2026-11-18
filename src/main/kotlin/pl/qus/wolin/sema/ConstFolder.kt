@@ -1,6 +1,7 @@
 package pl.qus.wolin.sema
 
 import pl.qus.wolin.ast.BinaryOp
+import pl.qus.wolin.ast.ArrayLiteral
 import pl.qus.wolin.ast.BoolLit
 import pl.qus.wolin.ast.CharLit
 import pl.qus.wolin.ast.Convert
@@ -8,6 +9,7 @@ import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.IntLit
 import pl.qus.wolin.ast.NullLit
 import pl.qus.wolin.ast.RealLit
+import pl.qus.wolin.ast.StringLit
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
 
@@ -44,6 +46,7 @@ object ConstFolder {
         is UnaryOp -> foldUnary(expr, constSoFar, functionNames)
         is BinaryOp -> foldBinary(expr, constSoFar, functionNames)
         is Convert -> foldConvert(expr, constSoFar, functionNames)
+        is ArrayLiteral -> foldArray(expr, constSoFar, functionNames)
         else -> null
     }
 
@@ -136,6 +139,28 @@ object ConstFolder {
         "/" -> const(l.value / r.value)
         "%" -> const(l.value % r.value)
         else -> null
+    }
+
+    /**
+     * Fold an array literal to an [ConstValue.ArrayValue], or null when any
+     * element does not fold to a constant.
+     */
+    /**
+     * A list of constant expressions: each element folds, and any
+     * [ConstValue.FunctionValue] or [ConstValue.NullValue] element makes the
+     * whole list non-constant (the same rule a scalar initialiser follows).
+     */
+    private fun foldArray(
+        e: ArrayLiteral,
+        constSoFar: Map<String, ConstValue>,
+        functionNames: Map<String, String>,
+    ): ConstValue? {
+        if (e.type.kind != TypeKind.ARRAY) return null
+        val ety = e.type.elementType ?: return null
+        val ity = e.type.indexType ?: return null
+        val elements = e.elements.map { fold(it, constSoFar, functionNames) ?: return null }
+        if (elements.any { it is ConstValue.FunctionValue || it is ConstValue.NullValue }) return null
+        return ConstValue.ArrayValue(elements, ety, ity)
     }
 
     /** The bits of [v] masked to the width of [t]. */
