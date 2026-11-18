@@ -151,24 +151,34 @@ class TypeChecker {
         functionNames: Map<String, String>,
     ) {
         val declared = global.declaredType
-        val init = global.init
-        if (init != null) {
+        if (global.init != null) {
             // The ordering error must beat the plain "unknown variable" the
             // reference check below would report for the same name.
             val laterNames = fileScope.globals.drop(index + 1).map { it.name }.toSet()
-            varRefs(init).firstOrNull { it.name in laterNames }?.let {
+            varRefs(global.init!!).firstOrNull { it.name in laterNames }?.let {
                 throw SemaException("initialiser references a global that is not yet initialised")
             }
         }
-        val initType = init?.let { checkExpr(it, declared) }
+        val initType = global.init?.let { ini ->
+            if (ini is Ast.ArrayLiteral) {
+                if (declared == null) throw SemaException("Array literal needs an array type")
+                if (declared?.kind != TypeKind.ARRAY) throw SemaException("${declared} is not an array type")
+                global.init = checkArrayInit(ini, declared)
+                declared
+            } else if (ini is StringLit && declared?.kind == TypeKind.ARRAY) {
+                global.init = checkArrayInit(ini, declared)
+                declared
+            } else checkExpr(ini, declared)
+        }
         if (declared != null && initType != null && initType.kind != declared.kind) {
             throw SemaException("Attempt reassign $declared $initType")
         }
         val type = declared ?: initType
             ?: throw SemaException("Variable ${global.name} has no type!")
         global.type = type
-        if (init != null) {
-            global.constValue = ConstFolder.fold(init, constSoFar, functionNames)
+        rejectCpuRegisterVariable(global.name, global.location)
+        if (global.init != null) {
+            global.constValue = ConstFolder.fold(global.init!!, constSoFar, functionNames)
                 ?: throw SemaException("global initialiser must be a constant expression")
         }
         scope.declare(global.name, Symbol.DataSymbol(type, global.location, global.init, global.isVal))
@@ -198,6 +208,7 @@ class TypeChecker {
                 }
             }
             is Convert -> varRefs(expr.value, out)
+            is ArrayLiteral -> expr.elements.forEach { varRefs(it, out) }
             else -> Unit
         }
         return out
@@ -238,6 +249,7 @@ class TypeChecker {
                 throw SemaException("Return not allowed for interrupt function!")
             }
         }
+        if (fn.fixedAddress != null) checkFixedAddressFunction(fn)
         val outer = scope
         val functionScope = globals.child()
         scope = functionScope
@@ -255,19 +267,102 @@ class TypeChecker {
         }
     }
 
+    /**
+     * The rules for a fixed-address function: a declaration of a routine
+     * that already lives somewhere else — a KERNAL routine, for instance.
+     *
+     * Every parameter names the register its argument arrives in, and a
+     * return type names the register the result arrives in. A `ubyte` result
+     * comes from one register (A, X or Y); a `uword` result comes from a
+     * pair (AX or XY), whose high byte is X in both.
+     */
+    private fun checkFixedAddressFunction(fn: FunDecl) {
+        for (param in fn.params) {
+            val register = param.location as? CpuRegister
+                ?: throw SemaException(
+                    "Fixed address function ${fn.name} needs a CPU register parameter"
+                )
+            if (!isSingleRegister(register.name)) {
+                throw SemaException(
+                    "Fixed address function ${fn.name} needs a single register parameter, not ${register.name}"
+                )
+            }
+        }
+        val retType = fn.retType ?: return
+        val register = fn.retLocation as? CpuRegister
+            ?: throw SemaException(
+                "Fixed address function ${fn.name} needs a CPU register return type"
+            )
+        when (retType.kind) {
+            TypeKind.UBYTE -> if (!isSingleRegister(register.name)) {
+                throw SemaException(
+                    "Fixed address function ${fn.name} returns one register, not ${register.name}"
+                )
+            }
+            TypeKind.UWORD -> if (register.name != "CPU.AX" && register.name != "CPU.XY") {
+                throw SemaException(
+                    "Fixed address function ${fn.name} returns a register pair, not ${register.name}"
+                )
+            }
+            else -> throw SemaException(
+                "Fixed address function ${fn.name} can only return ubyte or uword, not $retType"
+            )
+        }
+    }
+
+    /** Whether a `CPU.*` name is one of the single registers A, X and Y. */
+    private fun isSingleRegister(name: String): Boolean =
+        name == "CPU.A" || name == "CPU.X" || name == "CPU.Y"
+
+    /**
+     * A CPU-located variable (e.g. `var x: ubyte^CPU.X`) is rejected in v1:
+     * the compiler owns the CPU registers, so a value written to one does not
+     * survive unrelated code. The value must be read back through a
+     * fixed-address function return type, or passed as a parameter.
+     */
+    private fun rejectCpuRegisterVariable(name: String, location: Location?) {
+        if (location is CpuRegister) {
+            throw SemaException(
+                "CPU register variable $name is not supported yet: " +
+                    "the compiler owns the CPU registers, so a value written to " +
+                    "one does not survive other code. Return it from a " +
+                    "fixed-address function instead (e.g. " +
+                    "`fun rdtim^0xffde(): ubyte^CPU.A`), or pass it as a parameter."
+            )
+        }
+    }
+
     // ---- statements -------------------------------------------------------
 
     private fun checkStmt(stmt: Stmt) {
         when (stmt) {
             is LocalDecl -> {
                 val declared = stmt.declaredType
-                val initType = stmt.init?.let { checkExpr(it, declared) }
+                val init = stmt.init
+                val initType = init?.let { ini ->
+                    if (ini is Ast.ArrayLiteral) {
+                        if (declared == null) throw SemaException("Array literal needs an array type")
+                        if (declared?.kind != TypeKind.ARRAY) throw SemaException("${declared} is not an array type")
+                        if (stmt.location !is FixedArray) {
+                            throw SemaException("local arrays need a fixed address in v1")
+                        }
+                        stmt.init = checkArrayInit(ini, declared)
+                        declared
+                    } else if (ini is StringLit && declared?.kind == TypeKind.ARRAY) {
+                        if (stmt.location !is FixedArray) {
+                            throw SemaException("local arrays need a fixed address in v1")
+                        }
+                        stmt.init = checkArrayInit(ini, declared)
+                        declared
+                    } else checkExpr(ini, declared)
+                }
                 if (declared != null && initType != null && initType.kind != declared.kind) {
                     throw SemaException("Attempt reassign $declared $initType")
                 }
                 val type = declared ?: initType
                     ?: throw SemaException("Variable ${stmt.name} has no type!")
                 stmt.type = type
+                rejectCpuRegisterVariable(stmt.name, stmt.location)
                 scope.declare(stmt.name, Symbol.DataSymbol(type, stmt.location, stmt.init, stmt.isVal))
             }
 
@@ -408,6 +503,41 @@ class TypeChecker {
     }
 
     // ---- expressions ------------------------------------------------------
+
+    /**
+     * Types and validates an array initialiser against its declared array
+     * type. A string initialiser is converted into byte elements here, so
+     * every later stage sees an [ArrayLiteral] of integer elements.
+     *
+     * Returns the (possibly rewritten) initialiser expression.
+     */
+    private fun checkArrayInit(init: Expr, type: WolinType?): Expr {
+        val ety = type?.elementType ?: throw SemaException("Array literal needs an array type")
+        val ity = type.indexType ?: Types.ubyte
+        val elements: List<Expr> = when (init) {
+            is Ast.ArrayLiteral -> {
+                if (init.elements.size > arrayDomain(ity)) {
+                    throw SemaException("Too many array elements: ${init.elements.size} for a ${ity} index")
+                }
+                init.elements.forEach { e ->
+                    checkExpr(e, ety)
+                }
+                init.elements
+            }
+            is StringLit -> {
+                if (ety.kind != TypeKind.UBYTE) {
+                    throw SemaException("String initialiser needs a ubyte element type")
+                }
+                val bytes = init.bytes
+                if (bytes.size + 1 > arrayDomain(ity)) {
+                    throw SemaException("String initialiser too long: ${bytes.size + 1} for a ${ity} index")
+                }
+                bytes.map { IntLit(it.toLong(), ety) } + IntLit(0, ety)
+            }
+            else -> throw SemaException("Array literal needs an array type")
+        }
+        return Ast.ArrayLiteral(elements, type!!)
+    }
 
     private fun checkExpr(expr: Expr, expected: WolinType?): WolinType = when (expr) {
         is IntLit -> literalType(expr.value, expected).also { expr.type = it }
@@ -565,6 +695,9 @@ class TypeChecker {
     }
 
     private fun checkAssign(expr: Assign): WolinType {
+        if (expr.value is Ast.ArrayLiteral) {
+            throw SemaException("Array literal can only initialise a declaration")
+        }
         when (val target = expr.target) {
             is VarRef -> {
                 val symbol = lookup(target.name)
@@ -796,6 +929,10 @@ class TypeChecker {
     }
 
     // ---- type rules -------------------------------------------------------
+
+    /** The index type's domain: 256 for `ubyte`/`byte`, 65536 for `uword`/`word`. */
+    private fun arrayDomain(indexType: WolinType): Int =
+        if (indexType.kind == TypeKind.UWORD || indexType.kind == TypeKind.WORD) 65536 else 256
 
     /**
      * The type of an integer literal: the expected type when the context
