@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 
 class GoldenIrTest {
     @ParameterizedTest
-    @ValueSource(strings = ["add_ubyte", "global_const", "while_counter", "when_subject", "prefix_postfix"])
+    @ValueSource(strings = ["add_ubyte", "global_const", "while_counter", "when_subject", "prefix_postfix", "array_init"])
     fun emitsExpectedIr(name: String) {
         val src = javaClass.getResource("/golden/$name.wtk")!!.readText()
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
