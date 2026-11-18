@@ -1,0 +1,116 @@
+package c64.vic
+
+// VIC-II (MOS 6567/6569) register map, $d000-$d02f.
+//
+// Each name is a fixed-address `ubyte` window on one register: a read
+// fetches the register, a write stores it. The registers repeat every
+// 64 bytes in $d000-$d3ff (incomplete address decoding); these point at
+// the canonical $d000 block.
+//
+// $d01f and $d020 are read-only on the hardware (cleared on read), so they
+// are declared `val`. Bit notes per Bauer's VIC-II paper (zimmers.net).
+
+// --- Sprites 0-7: coordinates ---
+
+// X/Y coordinate of each sprite; the X low byte's bit 8 lives in
+// spriteXHigh.
+var sprite0X: ubyte^0xd000
+var sprite0Y: ubyte^0xd001
+var sprite1X: ubyte^0xd002
+var sprite1Y: ubyte^0xd003
+var sprite2X: ubyte^0xd004
+var sprite2Y: ubyte^0xd005
+var sprite3X: ubyte^0xd006
+var sprite3Y: ubyte^0xd007
+var sprite4X: ubyte^0xd008
+var sprite4Y: ubyte^0xd009
+var sprite5X: ubyte^0xd00a
+var sprite5Y: ubyte^0xd00b
+var sprite6X: ubyte^0xd00c
+var sprite6Y: ubyte^0xd00d
+var sprite7X: ubyte^0xd00e
+var sprite7Y: ubyte^0xd00f
+
+// Bit 8 (MSB) of each sprite's X coordinate; bit 7-n is sprite n.
+var spriteXHigh: ubyte^0xd010
+
+// Control 1: bit 7 RST8 (bit 8 of the raster comparison line), 6 ECM, 5 BMM,
+// 4 DEN, 3 RSEL, 2-0 YSCROLL.
+var controlRegister1: ubyte^0xd011
+
+// Raster counter: the current raster line (0-255); bit 8 is RST8 in
+// controlRegister1. A write to these two registers sets the raster
+// interrupt comparison line.
+var rasterCounter: ubyte^0xd012
+
+// Light pen position, latched on a negative edge of the light pen line.
+var lightPenX: ubyte^0xd013
+var lightPenY: ubyte^0xd014
+
+// Sprites 0-7 enabled; bit 7-n is sprite n.
+var spriteEnable: ubyte^0xd015
+
+// Control 2: bit 5 RES (no function on the 6567/6569), 4 MCM, 3 CSEL, 2-0
+// XSCROLL.
+var controlRegister2: ubyte^0xd016
+
+// Sprites 0-7 Y expansion (doubled height); bit 7-n is sprite n.
+var spriteYExpansion: ubyte^0xd017
+
+// Screen address pointer: screenAddressHigh holds bits 13-10 of the screen
+// address (its bits 7-4) and bits 13-11 of the color address (its bits 3-1);
+// screenAddressLow holds the low byte of the screen address.
+var screenAddressHigh: ubyte^0xd018
+var screenAddressLow: ubyte^0xd019
+
+// Interrupt status: bit 7 IRQ (master; writing 0 clears it), 4 ILP, 3 IMMC
+// (sprite-sprite collision), 2 IMBC (sprite-background collision), 1 IRST
+// (raster line).
+var interruptStatus: ubyte^0xd01a
+
+// Interrupt enable: bit 4 ELP, 3 EMMC, 2 EMBC, 1 ERST.
+var interruptEnable: ubyte^0xd01b
+
+// Sprites 0-7 above the background (data priority); bit 7-n is sprite n.
+var spriteDataPriority: ubyte^0xd01c
+
+// Sprites 0-7 multicolor; bit 7-n is sprite n.
+var spriteMulticolor: ubyte^0xd01d
+
+// Sprites 0-7 X expansion (doubled width); bit 7-n is sprite n.
+var spriteXExpansion: ubyte^0xd01e
+
+// Sprites 0-7 collided with another sprite; read-only, cleared on read.
+val spriteSpriteCollision: ubyte^0xd01f
+
+// Sprites 0-7 collided with background data; read-only, cleared on read.
+val spriteBackgroundCollision: ubyte^0xd020
+
+// --- Colors: a 4-bit palette value in bits 3-0 (0 black, 1 white, 2 red,
+// 3 cyan, 4 pink, 5 green, 6 blue, 7 yellow, 8 orange, 9 brown, 10 light
+// red, 11 dark gray, 12 medium gray, 13 light green, 14 light blue,
+// 15 light gray) ---
+
+// Border color.
+var borderColor: ubyte^0xd021
+
+// Background colors 0-3.
+var backgroundColor0: ubyte^0xd022
+var backgroundColor1: ubyte^0xd023
+var backgroundColor2: ubyte^0xd024
+var backgroundColor3: ubyte^0xd025
+
+// Multicolor background colors 0-1 (the background pair in multicolor
+// bitmap mode).
+var multicolorBackground0: ubyte^0xd026
+var multicolorBackground1: ubyte^0xd027
+
+// Sprite colors 0-7.
+var spriteColor0: ubyte^0xd028
+var spriteColor1: ubyte^0xd029
+var spriteColor2: ubyte^0xd02a
+var spriteColor3: ubyte^0xd02b
+var spriteColor4: ubyte^0xd02c
+var spriteColor5: ubyte^0xd02d
+var spriteColor6: ubyte^0xd02e
+var spriteColor7: ubyte^0xd02f

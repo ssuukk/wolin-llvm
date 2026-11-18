@@ -12,3 +12,8 @@ fun print(x: string) {
         i++
     }
 }
+
+fun println(x: string) {
+    print(x)
+    chrout(13)
+}

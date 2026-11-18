@@ -1,4 +1,152 @@
 package c64.kernal
 
-// CHROUT ($FFD2): output the byte in A as a character.
+// C64 KERNAL routines. Each is a fixed-address function: the wrapper `jsr`s
+// to the address with the parameters in their declared registers, and (when a
+// return type is declared) reads the result back from the named register. A
+// pair lists its registers low byte first: CPU.AX = A low / X high, CPU.XY =
+// X low / Y high.
+//
+// v1 limitations (see REFERENCE.md, "ROM calls"):
+// - An error signalled only by the Carry flag cannot be returned (flags are
+//   not returnable); such routines declare no return type. Where the kernal
+//   leaves a status byte, check READST.
+// - Dual-mode routines (MEMBOT, MEMTOP, PLOT) select read vs set with the
+//   Carry flag, which v1 cannot set; they are declared for the READ mode.
+
+// --- I/O status and file control ---
+
+// READST ($FFB7): the current I/O status word in A.
+fun readst^0xffb7(): ubyte^CPU.A
+
+// SETLFS ($FFBA): set the logical file number, device, and secondary
+// address for the next open.
+fun setlfs^0xffba(lfn: ubyte^CPU.A, dev: ubyte^CPU.X, sa: ubyte^CPU.Y)
+
+// SETNAM ($FFBD): set the filename from a NUL-terminated string in page
+// zero (its address is set by SECOND).
+fun setnam^0xffbd()
+
+// SECOND ($FF93): set the secondary address (must be ORed with $60).
+fun second^0xff93(sa: ubyte^CPU.A)
+
+// KOPEN ($FFC0): open the file configured by SETLFS/SETNAM/SECOND. Error is
+// in the Carry flag (not returnable in v1). Named `kopen` to keep `open`
+// clear.
+fun kopen^0xffc0()
+
+// CLOSE ($FFC3): close the logical file. Error is in the Carry flag.
+fun close^0xffc3(lfn: ubyte^CPU.A)
+
+// CLRCHN ($FFCC): close the input and output channels.
+fun clrchn^0xffcc()
+
+// CHKIN ($FFC6): set the logical file as the input channel. Returns the
+// error code from A, valid only on error (the Carry that flags the error is
+// not returnable in v1).
+fun chkin^0xffc6(lfn: ubyte^CPU.X): ubyte^CPU.A
+
+// CHKOUT ($FFC9): set the logical file as the output channel. Returns the
+// error code from A, valid only on error.
+fun chkout^0xffc9(lfn: ubyte^CPU.X): ubyte^CPU.A
+
+// CHRIN ($FFCF): the next character from the input channel in A.
+fun chrin^0xffcf(): ubyte^CPU.A
+
+// CHROUT ($FFD2): output the byte in A as a character. Status via READST.
 fun chrout^0xffd2(c: ubyte^CPU.A)
+
+// CIOUT ($FFA8): transmit the byte in A over the serial bus. Status via
+// READST.
+fun ciout^0xffa8(c: ubyte^CPU.A)
+
+// ACPTR ($FFA5): the data byte received from the serial bus in A. Error
+// status via READST.
+fun acptr^0xffa5(): ubyte^CPU.A
+
+// LISTEN ($FFB1): command the device to listen. Status via READST.
+fun listen^0xffb1(dev: ubyte^CPU.A)
+
+// TALK ($FFB4): command the device to talk. Status via READST.
+fun talk^0xffb4(dev: ubyte^CPU.A)
+
+// TKSA ($FF96): set the secondary address after TALK. Status via READST.
+fun tksa^0xff96(sa: ubyte^CPU.A)
+
+// UNLSN ($FFAE): unlisten. Status via READST.
+fun unlsn^0xffae()
+
+// UNTALK ($FFAB): untalk. Status via READST.
+fun untalk^0xffab()
+
+// LOAD ($FFD5): load the file configured by SETLFS/SETNAM/SECOND. Status
+// via READST.
+fun load^0xffd5()
+
+// SAVE ($FFD8): save from the page in A to the address in X:Y. Error is in
+// the Carry flag.
+fun save^0xffd8(start: ubyte^CPU.A, endLo: ubyte^CPU.X, endHi: ubyte^CPU.Y)
+
+// --- Memory ---
+
+// MEMBOT ($FF9C): the bottom of memory, X low / Y high. Dual-mode via
+// Carry (set=read, clear=set); declared for read mode, so the Carry must be
+// set before the call for a read.
+fun membot^0xff9c(): uword^CPU.XY
+
+// MEMTOP ($FF99): the top of memory, X low / Y high. Dual-mode via Carry
+// (set=read, clear=set); declared for read mode.
+fun memtop^0xff99(): uword^CPU.XY
+
+// RAMTAS ($FF87): set the top of RAM / start of the tape area. No value.
+fun ramtas^0xff87()
+
+// IOBASE ($FFF3): the I/O base address, X low / Y high ($DC00 on a C64).
+fun iobase^0xfff3(): uword^CPU.XY
+
+// IOINIT ($FF84): initialise the I/O area. No value.
+fun ioinit^0xff84()
+
+// CINT ($FF81): initialise the machine (interrupts, clocks, I/O). No value.
+fun cint^0xff81()
+
+// CLALL ($FFE7): close all open files. No value.
+fun clall^0xffe7()
+
+// --- Screen and keyboard ---
+
+// SCREEN ($FFED): the screen size, X = columns / Y = rows (40 x 25).
+fun screen^0xffed(): uword^CPU.XY
+
+// PLOT ($FFF0): the cursor position, X = row / Y = column. Dual-mode via
+// Carry (set=read, clear=set); declared for read mode.
+fun plot^0xfff0(): uword^CPU.XY
+
+// GETIN ($FFE4): a character from the keyboard queue in A, or 0 if empty.
+// The input channel must be set with CHKIN.
+fun getin^0xffe4(): ubyte^CPU.A
+
+// SCNKEY ($FF9F): poll the keyboard into the keyboard queue. No value.
+fun scnkey^0xff9f()
+
+// STOP ($FFE1): 0 in A if the STOP key is not pressed, non-zero if it is.
+fun stop^0xffe1(): ubyte^CPU.A
+
+// --- Timing ---
+
+// RDTIM ($FFDE): the jiffy clock. The full value is 24 bits (A high, X
+// middle, Y low); v1 returns the top 16 bits in A:X, so the low byte (Y) is
+// dropped.
+fun rdtim^0xffde(): uword^CPU.AX
+
+// SETTIM ($FFDB): set the jiffy clock to the 16-bit value in A (high) : X
+// (low).
+fun settim^0xffdb(hi: ubyte^CPU.A, lo: ubyte^CPU.X)
+
+// UDTIM ($FFEA): advance the jiffy clock to the next frame. No value.
+fun udtim^0xffea()
+
+// --- Misc ---
+
+// SETMSG ($FF90): set the control/error message flags.
+fun setmsg^0xff90(flags: ubyte^CPU.A)
+

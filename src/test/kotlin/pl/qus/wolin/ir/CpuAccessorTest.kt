@@ -61,4 +61,52 @@ class CpuAccessorTest {
         assertTrue(ir.contains("\"=x\"()"), ir)
     }
 
+    @Test fun `readX moves X through A into an SSA value`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I8)
+        val v = CpuAccessors.readX(b)
+        b.ret(v)
+        b.endFunction()
+        val ir = b.render()
+        assertTrue(ir.contains("pha\\0Atxa\\0Atax\\0Apla"), ir)
+        assertTrue(ir.contains("\"=x\"()"), ir)
+    }
+
+    @Test fun `readY moves Y through A into an SSA value`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I8)
+        val v = CpuAccessors.readY(b)
+        b.ret(v)
+        b.endFunction()
+        val ir = b.render()
+        assertTrue(ir.contains("pha\\0Atya\\0Atay\\0Apla"), ir)
+        assertTrue(ir.contains("\"=y\"()"), ir)
+    }
+
+    @Test fun `readRegister dispatches by register name`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I8)
+        val a = CpuAccessors.readRegister(b, "CPU.A")
+        val x = CpuAccessors.readRegister(b, "CPU.X")
+        val y = CpuAccessors.readRegister(b, "CPU.Y")
+        b.ret(y)
+        b.endFunction()
+        val ir = b.render()
+        assertTrue(ir.contains("pha\\0Apla"), ir)
+        assertTrue(ir.contains("pha\\0Atxa\\0Atax\\0Apla"), ir)
+        assertTrue(ir.contains("pha\\0Atya\\0Atay\\0Apla"), ir)
+    }
+
+    @Test fun `readRegister rejects a flag`() {
+        val b = IrBuilder()
+        b.startFunction("f", IrType.I8)
+        b.ret(IrValue("%v0", IrType.I8))
+        b.endFunction()
+        val e = kotlin.test.assertFailsWith<IllegalStateException> {
+            CpuAccessors.readRegister(b, "CPU.C")
+        }
+        assertTrue(e.message!!.contains("CPU.C"), e.message)
+    }
+
+
 }

@@ -59,6 +59,61 @@ object CpuAccessors {
     fun readAxHigh(b: IrBuilder): IrValue =
         b.instr(IrType.I8, "call i8 asm sideeffect \"pha\\0Atxa\\0Atax\\0Apla\", \"=x\"()")
 
+    /**
+     * Reads X into an SSA value.
+     *
+     * `pha`/`txa`/`tax`/`pla` moves X through A and back: the value ends up
+     * in the output register X, and A is left as it was. Clobbers N and Z.
+     */
+    fun readX(b: IrBuilder): IrValue =
+        b.instr(IrType.I8, "call i8 asm sideeffect \"pha\\0Atxa\\0Atax\\0Apla\", \"=x\"()")
+
+    /**
+     * Reads Y into an SSA value.
+     *
+     * `pha`/`tya`/`tay`/`pla` moves Y through A and back, the same way
+     * [readX] moves X. Clobbers N and Z.
+     */
+    fun readY(b: IrBuilder): IrValue =
+        b.instr(IrType.I8, "call i8 asm sideeffect \"pha\\0Atya\\0Atay\\0Apla\", \"=y\"()")
+
+    /**
+     * Reads the register [reg] (`"CPU.A"`, `"CPU.X"`, `"CPU.Y"`) into an SSA
+     * value.
+     */
+    fun readRegister(b: IrBuilder, reg: String): IrValue = when (reg) {
+        "CPU.A" -> readAValue(b)
+        "CPU.X" -> readX(b)
+        "CPU.Y" -> readY(b)
+        else -> throw error("No accessor for register $reg")
+    }
+
+    /**
+     * Reads the register pair [reg] into an SSA value. The pair name lists
+     * the registers in low-to-high byte order:
+     *
+     * - `"CPU.AX"`: A holds the low byte, X the high byte, the same layout
+     *   the LLVM-MOS calling convention returns an `i16` in.
+     * - `"CPU.XY"`: X holds the low byte, Y the high byte, as the C64
+     *   KERNAL leaves 16-bit results (MEMBOT puts the address in X and Y).
+     *
+     * The two bytes are read one after the other and joined, so the value
+     * does not depend on the register allocator keeping a register alive
+     * across the two reads.
+     */
+    fun readRegisterPair(b: IrBuilder, reg: String): IrValue {
+        val (lowReg, highReg) = when (reg) {
+            "CPU.AX" -> "CPU.A" to "CPU.X"
+            "CPU.XY" -> "CPU.X" to "CPU.Y"
+            else -> throw error("No accessor for register pair $reg")
+        }
+        val low = readRegister(b, lowReg)
+        val high = readRegister(b, highReg)
+        val lowWide = b.instr(IrType.I16, "zext i8 ${low.name} to i16")
+        val highWide = b.instr(IrType.I16, "zext i8 ${high.name} to i16")
+        val shifted = b.instr(IrType.I16, "shl i16 ${highWide.name}, 8")
+        return b.instr(IrType.I16, "or i16 ${shifted.name}, ${lowWide.name}")
+    }
 }
 
 /**
