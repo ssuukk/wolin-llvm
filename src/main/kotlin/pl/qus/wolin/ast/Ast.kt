@@ -74,7 +74,7 @@ sealed interface Ast {
     data class GlobalDecl(
         val name: String,
         var type: WolinType,
-        val init: Expr?,
+        var init: Expr?,
         val location: Location?,
         /** `val` declarations cannot be assigned to. */
         val isVal: Boolean = false,
@@ -134,7 +134,7 @@ sealed interface Ast {
     data class LocalDecl(
         val name: String,
         var type: WolinType,
-        val init: Expr?,
+        var init: Expr?,
         val isVal: Boolean,
         val location: Location? = null,
         /** The type as written in the source, or null when there was none. */
