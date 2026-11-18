@@ -83,10 +83,11 @@ class AstBuilder {
             .any { it.functionModifier()?.INTERRUPT() != null }
         val fixedAddress = ctx.locationReference()?.let { locationAddress(it) }
         val params = ctx.functionValueParameters()?.functionValueParameter().orEmpty().map { buildParam(it) }
-        val retType = ctx.type().lastOrNull { type ->
+        val retInfo = ctx.type().lastOrNull { type ->
             val colon = ctx.COLON() ?: return@lastOrNull false
             type.start.tokenIndex > colon.symbol.tokenIndex
-        }?.let { buildType(it).type }
+        }?.let { buildType(it) }
+        val retType = retInfo?.type
 
         val returnAt = mutableListOf<ReturnAt>()
         val previousSink = returnAtSink
@@ -97,7 +98,10 @@ class AstBuilder {
             returnAtSink = previousSink
         }
 
-        return FunDecl(name, params, retType, body, isInterrupt, fixedAddress, returnAt)
+        return FunDecl(
+            name, params, retType, body, isInterrupt, fixedAddress, returnAt,
+            retLocation = retInfo?.location,
+        )
     }
 
     private fun buildParam(ctx: KotlinParser.FunctionValueParameterContext): Param {
@@ -326,6 +330,11 @@ class AstBuilder {
         return ArrayAccess(array, buildExpression(index), Types.unit)
     }
 
+    private fun buildCollection(ctx: KotlinParser.CollectionLiteralContext): Expr {
+        val elements = ctx.expression().map { buildExpression(it) }
+        return ArrayLiteral(elements, Types.unit)
+    }
+
     private fun buildAtomic(ctx: KotlinParser.AtomicExpressionContext): Expr {
         ctx.parenthesizedExpression()?.let { return buildExpression(it.expression()) }
         ctx.literalConstant()?.let { return buildLiteral(it) }
@@ -341,7 +350,7 @@ class AstBuilder {
         ctx.superExpression()?.let { unsupported("super expression") }
         ctx.tryExpression()?.let { unsupported("try expression") }
         ctx.objectLiteral()?.let { unsupported("object literal") }
-        ctx.collectionLiteral()?.let { unsupported("collection literal") }
+        ctx.collectionLiteral()?.let { return buildCollection(it) }
         unsupported("expression")
     }
 

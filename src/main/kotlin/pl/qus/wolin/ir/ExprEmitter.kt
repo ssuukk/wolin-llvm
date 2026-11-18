@@ -2,6 +2,7 @@ package pl.qus.wolin.ir
 
 import kotlin.math.abs
 import pl.qus.wolin.ast.ArrayAccess
+import pl.qus.wolin.ast.ArrayLiteral
 import pl.qus.wolin.ast.Assign
 import pl.qus.wolin.ast.BinaryOp
 import pl.qus.wolin.ast.BoolLit
@@ -113,6 +114,7 @@ class ExprEmitter(
         is BinaryOp -> emitBinary(e)
         is Assign -> emitAssign(e)
         is ArrayAccess -> emitArrayAccess(e)
+        is ArrayLiteral -> throw error("Array literal cannot be evaluated as an expression")
         is Call -> emitCall(e)
         is IfExpr -> emitIfExpr(e)
         is WhenExpr -> emitWhenExpr(e)

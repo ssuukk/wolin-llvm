@@ -426,6 +426,7 @@ class TypeChecker {
         is WhenExpr -> checkWhenExpr(expr, expected)
         is ArrayAccess -> checkArrayAccess(expr)
         is Convert -> checkConvert(expr)
+        is ArrayLiteral -> throw SemaException("Array literal can only initialise a declaration")
     }
 
     /**

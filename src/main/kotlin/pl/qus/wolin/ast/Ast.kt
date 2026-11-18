@@ -91,7 +91,14 @@ sealed interface Ast {
         val body: List<Stmt>,
         val isInterrupt: Boolean,
         val fixedAddress: Int?,
-        val returnAt: List<ReturnAt>
+        val returnAt: List<ReturnAt>,
+        /**
+         * The register the return value arrives in, for a fixed-address
+         * function: the `^CPU.A` of `fun readst^0xffb7(): ubyte^CPU.A`.
+         * Null when the function returns nothing, or returns a value that
+         * does not come from a register.
+         */
+        val retLocation: Location? = null,
     ) : Ast
 
     data class Param(val name: String, val type: WolinType, val location: Location?) : Ast
@@ -190,6 +197,9 @@ sealed interface Ast {
     /** `array[index]`. The result type is the element type of the array. */
     data class ArrayAccess(val array: Expr, val index: Expr, override var type: WolinType) : Expr
 
+    /** `[v1, v2, …]` — an array initialiser. The type is filled by the checker. */
+    data class ArrayLiteral(val elements: List<Expr>, override var type: WolinType) : Expr
+
     /**
      * An explicit integer conversion: `value.toByte()`, `.toUbyte()`, `.toWord()`
      * or `.toUword()`. [to] is the target type; the checker fills [type] with it.
@@ -235,6 +245,7 @@ typealias BlockStmt = Ast.BlockStmt
 typealias IfExpr = Ast.IfExpr
 typealias WhenExpr = Ast.WhenExpr
 typealias ArrayAccess = Ast.ArrayAccess
+typealias ArrayLiteral = Ast.ArrayLiteral
 typealias Convert = Ast.Convert
 typealias NullLit = Ast.NullLit
 typealias WhenEntry = Ast.WhenEntry
