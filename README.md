@@ -130,6 +130,27 @@ source's signedness, and a narrowing one truncates. Conversions chain, so
   destination type is an error, and there is no implicit promotion between
   the integer types.
 
+## Examples
+
+`examples/` holds programs to run on a C64 (or under VICE). Each is built
+the same way, with the stdlib files it needs:
+
+```bash
+java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt \
+    stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk \
+    examples/petscii.wtk -o petscii.prg
+```
+
+- `hello.wtk` — print text, then cycle the border and background through
+  all 16 palette colours.
+- `sprites.wtk` — move a 1-colour and a multicolour sprite.
+- `petscii.wtk` — draw frames with the Unicode box-drawing characters.
+  A source string is mapped to PETSCII at compile time, so `┌─┐` reaches
+  the screen as the C64's own corner glyphs (see
+  [REFERENCE.md](REFERENCE.md#petscii)).
+- `raster_irq.wtk` — an open-border sprite and a raster-interrupt
+  colour band.
+
 ## Tests
 
 ```bash

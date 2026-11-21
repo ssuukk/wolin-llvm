@@ -1,9 +1,11 @@
 # TODO — features not yet implemented
 
-Wolin v1 (this compiler) implements the language surface in `REFERENCE.md`.
-This list is what remains. Sources: spec §3 (v1 non-goals), §12 (out of
-scope), the diagnostic catalogue in `UnsupportedTest`, and a code audit of
-2026-11-15.
+Wolin v2 (this compiler) implements the language surface shipped in
+`REFERENCE.md`. Working target is v2. This list tracks v2 items plus known
+gaps moved from the code audit (2026-11-15).
+
+Sources: spec §3 (v1 non-goals), §12 (out of scope), the diagnostic
+catalogue in `UnsupportedTest`, and a code audit of 2026-11-15.
 
 ## This cycle — landed
 
@@ -32,6 +34,12 @@ Design: `docs/superpowers/specs/2026-11-17-kernal-return-values-design.md`.
       checker in v1 — no register storage in v1; the register IR plumbing
       was reverted. Follow-up: re-land the accessors when register
       variables are wanted.
+- [x] CPU flag variable (`var m: bool^CPU.I`, `var c: bool^CPU.C`) — a flag
+      is a single bit of P, so it survives other code. A write lowers to
+      the flag's set/clear instruction (`sei`/`cli` for I, `sec`/`clc` for
+      C), a read to the bit test. Only C and I qualify — the 6502 has no
+      `sen`/`sez` — so `CPU.N`/`CPU.Z`, like the full registers
+      (`CPU.A`/`CPU.X`/`CPU.Y`), are rejected.
 
 ### 2026-11-16 — signed byte and conversions
 
@@ -62,16 +70,15 @@ No plan yet. Each was deferred from v1 for the stated reason.
       templates are rejected.
 - [ ] **Link map** in the output — the CLI note "(no link map in v1)".
 
-## Known gaps found in the code audit (2026-11-15)
+### Known gaps moved to v2 (code audit 2026-11-15)
 
-- [ ] **Unrecognised declaration modifiers are silently accepted.**
-      `buildFunction` (`AstBuilder.kt:82-83`) reads only the `interrupt`
-      modifier; `external fun`, `cc65 fun`, `suspend fun`, `infix fun`,
-      `operator fun` and visibility modifiers compile as if absent. The
-      diagnostic catalogue (spec plan Task 9) lists `cc65 fun` and
-      `external fun` as rejects, but nothing rejects them today. Decide:
-      reject all unrecognised modifiers, or support `cc65 fun` (inline 6502)
-      and `external fun`.
+Moved from the "Known gaps" section below; now v2 work items:
+
+- [x] **Unrecognised declaration modifiers silently accepted.**
+      `buildFunction` (`AstBuilder.kt`) now rejects every modifier except
+      `interrupt` (`external fun`, `cc65 fun`, `suspend fun`, `infix fun`,
+      `operator fun`, visibility modifiers); catalogue pinned in
+      `UnsupportedTest`.
 - [ ] **Property modifiers are silently accepted too.** `const val`,
       `lateinit var`, `open val` and friends parse and are ignored
       (`buildGlobal`/`buildLocal` read no modifiers).
@@ -107,11 +114,15 @@ No plan yet. Each was deferred from v1 for the stated reason.
       reject such a mask is `TypeChecker.maskLiteral`, which sees only a
       literal or a negated literal, so a non-literal mask skips it.
 
-- [ ] **Source strings are not converted to PETSCII.** String literals stay
-      ASCII (UTF-8 source) and `print` sends the raw bytes to CHROUT, which
-      forces case with the shift state off — lowercase input lands uppercase
-      on screen (`print("hi")` prints `HI`). Convert ASCII/UTF-8 source
-      strings to PETSCII at compile time.
+## Known gaps found in the code audit (2026-11-15) — moved to v2
+
+All 7 gaps moved to v2 above; source-strings conversion landed:
+
+- [x] **Source strings are converted to PETSCII.** String literals are mapped
+      through the 64tass Unicode → PETSCII table at compile time: uppercase
+      letters go to the high range ($C1–$DA), lowercase to the low range
+      ($41–$5A), punctuation and digits map directly. Unmapped bytes pass
+      through unchanged, so escapes like `\n` and `\r` keep their meaning.
 
 ## Rejected today — diagnostic catalogue, no date
 

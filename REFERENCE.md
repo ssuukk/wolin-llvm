@@ -52,11 +52,10 @@ assigned to a `word` variable or passed to a function expecting a `ubyte`
 without a conversion.
 
 ## Declarations
-
-```kotlin
 var x: ubyte                  // local: a stack slot (or global: data section)
 var x: ubyte^0xd020           // fixed-address variable: direct load/store, no storage
-var x: bool^CPU.I             // CPU-register-backed variable
+var x: bool^CPU.I             // CPU status flag: interrupt bit
+var carry: bool^CPU.C         // CPU status flag: carry bit
 var arr: ubyte[ubyte]         // global array, data section, zero-initialised, 256 elements
 var arr: ubyte[uword]         // 65536 elements (size = index type's domain)
 var arr: ubyte[ubyte]^0x3000  // array at a fixed address
@@ -252,10 +251,19 @@ rejected by the checker. Registers only appear in ROM call signatures,
 where a parameter or return value names the register it passes through
 (see [ROM calls](#rom-calls)).
 
+The exception is a flag variable: `var maskInterrupts: bool^CPU.I` (the
+interrupt flag) and `var carry: bool^CPU.C` (the carry flag). A flag is a
+single bit of P that the compiler can read and write without clobbering its
+own accumulator, so it survives interleaved code. A write lowers to the
+flag's set or clear instruction - `sei`/`cli` for `CPU.I`, `sec`/`clc` for
+`CPU.C`; a read returns the bit as a `bool`. Only these two flags qualify:
+the 6502 has a set and a clear instruction for `C` and `I`, but none for
+`N` or `Z`, so `bool^CPU.N` and `bool^CPU.Z` are rejected.
+
 | Register | Type |
 |---|---|
 | `CPU.A` `CPU.X` `CPU.Y` | `ubyte` |
-| `CPU.C` `CPU.I` `CPU.N` `CPU.Z` | `bool` (flags) |
+| `CPU.C` `CPU.I` | `bool` (flags) |
 | `CPU.AX` `CPU.XY` | `uword` (16-bit pairs) |
 
 ### ROM calls
@@ -420,16 +428,22 @@ Three files ship in `stdlib/`; pass the ones you use on the command
 line before your own files:
 
 ```
-wolinc stdlib/c64-kernal.wtk stdlib/std.wtk stdlib/vic.wtk myprog.wtk -o myprog.prg
+wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk myprog.wtk -o myprog.prg
 ```
 
-- `c64-kernal.wtk` (`package c64.kernal`) — kernal entry points as
+- `c64/kernal.wtk` (`package c64.kernal`) — kernal entry points as
   fixed-address declarations: `chrout^0xffd2(c: ubyte^CPU.A)` outputs the
   byte in A.
-- `std.wtk` (`package wolin`) — Wolin built on the kernal:
+- `wolin/screen.wtk` (`package wolin`) — Wolin built on the kernal:
   `print(x: string)` writes every byte up to the NUL terminator through
   `chrout`. Use `\r` (`0x0D`) in the string for a screen newline.
-- `vic.wtk` (`package c64.vic`) — the VIC-II register map ($d000-$d02f) as
+  `printAt(row, col, s, color)` writes a string straight into screen RAM
+  at row and column, in the given colour; `screenCode(p)` is the PETSCII
+  → screen code conversion it uses (screen RAM holds screen codes, not
+  PETSCII — see [PETSCII](#petscii)). Fixed-address windows `screen` ($0400)
+  and `colorRam` ($D800) sit on top; `clearScreen^0xe544` clears the
+  screen through the kernal.
+- `c64/vic.wtk` (`package c64.vic`) — the VIC-II register map ($d000-$d02f) as
   fixed-address `ubyte` windows: `sprite0X`…`sprite7Y` (sprite
   coordinates), `rasterCounter`, `screenAddressHigh`/`screenAddressLow`,
   `interruptStatus`/`interruptEnable`, `borderColor`,
@@ -449,10 +463,47 @@ the result comes back in: `readst^0xffb7(): ubyte^CPU.A` (see
 [ROM calls](#rom-calls)). String bytes go out as written: screen codes are
 the index and prints forever; that is the v1 limit on all string
 indexing. Kernal routines that return a value in A cannot be declared
-yet (see `TODO.md`). String bytes go out as written: screen codes are
-PETSCII, not ASCII, and the kernal forces case with the shift state off
-(lowercase input lands uppercase) — converting source strings to PETSCII
-is a known gap (see `TODO.md`).
+yet (see `TODO.md`). String bytes go out as written: source strings are
+converted to PETSCII at compile time (uppercase letters to $C1–$DA,
+lowercase to $41–$5A), and CHROUT maps them onto the screen-code
+character set.
+
+## PETSCII
+
+A source string is mapped to PETSCII at compile time, through the 64tass
+Unicode → PETSCII table. The case is inverted on the way: an uppercase
+letter becomes the PETSCII high range ($C1–$DA), a lowercase letter the
+low range ($41–$5A). The box-drawing, block, suit and symbol characters
+have their PETSCII slots too, so a source frame like
+
+```wtk
+print("┌───────┐")
+```
+
+reaches the screen as PETSCII $B0 $C0 $C0 $C0 $C0 $C0 $C0 $C0 $AE.
+
+The case inversion is undone by the KERNAL: CHROUT maps PETSCII onto the
+screen codes, and PETSCII $41 (a lowercase 'a') becomes screen code
+$41 (an uppercase 'A'). The two cancel, so the text reads on screen with
+the case it was written in.
+
+Screen RAM holds **screen codes**, not PETSCII: the VIC-II indexes the
+character ROM by the screen code, and the two differ. `chrout` does the
+conversion; a program that writes screen RAM directly has to do it too,
+which is what `wolin.printAt` does through `wolin.screenCode`:
+
+| PETSCII | screen code |
+|---------|-------------|
+| $20–$3F | $20–$3F |
+| $40–$5F | $00–$1F |
+| $60–$7F | $40–$5F |
+| $80–$9F | $C0–$DF |
+| $A0–$BF | $60–$7F |
+| $C0–$FE | $40–$5F |
+| $FF | $5E |
+
+The table was measured on a C64: every PETSCII byte was sent through
+CHROUT and the resulting screen RAM read back.
 
 ## Diagnostics
 
