@@ -47,7 +47,7 @@ class ScopeTest {
                     entry.conditions.forEach(::walkExpr); entry.body.forEach { walkStmt(it) }
                 }
                 is Ast.WhenEntry -> {}
-                is Ast.BreakStmt, is Ast.ContinueStmt -> {}
+                is Ast.BreakStmt, is Ast.ContinueStmt, is Ast.LabelStmt -> {}
             }
         }
         program.functions.forEach { f -> f.body.forEach { walkStmt(it) } }

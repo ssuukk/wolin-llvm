@@ -132,24 +132,6 @@ class UnsupportedTest {
         assertRejected("""fun f() { val s = "${'$'}{1}" }""")
     }
 
-    @Test fun `a labelled break is rejected`() {
-        assertRejected("fun f() { break@foo }")
-    }
-
-    @Test fun `a labelled continue is rejected`() {
-        assertRejected("fun f() { continue@foo }")
-    }
-
-    /**
-     * `return@<label>` is a label, not an address. It used to be accepted
-     * and silently dropped, which would have made Task 10's tail jump do
-     * nothing. The ADDRESS form — `return@0xea31` — stays supported and is
-     * pinned by `ReturnAtGrammarTest`.
-     */
-    @Test fun `a labelled return is rejected`() {
-        assertRejected("fun f() { return@foo }")
-    }
-
     @Test fun `an unlabelled break and continue stay supported`() {
         check("fun f() { while (true) { break } }")
         check("fun f() { while (true) { continue } }")

@@ -20,6 +20,8 @@ class TypeChecker {
     private var resolved: MutableMap<VarRef, Symbol> = IdentityHashMap()
     private var currentReturnType: WolinType? = null
     private var currentFunctionName: String = ""
+    /** Labels defined in the function being checked; null outside one. */
+    private var currentLabels: Set<String>? = null
     private val importResolver = ImportResolver()
     /** The imports of the file being checked. */
     private var fileImports: List<ImportDecl> = emptyList()
@@ -256,6 +258,7 @@ class TypeChecker {
         currentReturnType = fn.retType
         currentFunctionName = fn.name
         try {
+            currentLabels = collectLabels(fn.body)
             fn.params.forEach { param ->
                 functionScope.declare(param.name, Symbol.DataSymbol(param.type, param.location, null))
             }
@@ -264,6 +267,7 @@ class TypeChecker {
             scope = outer
             currentReturnType = null
             currentFunctionName = ""
+            currentLabels = null
         }
     }
 
@@ -438,8 +442,55 @@ class TypeChecker {
             is WhenStmt -> checkWhen(stmt)
             is WhenEntry -> throw SemaException("A when entry cannot appear outside a when")
 
-            is ReturnAtStmt -> Unit
-            is BreakStmt, is ContinueStmt -> Unit
+            is ReturnAtStmt -> (stmt.target as? ReturnAtLabel)?.let { requireLabel(it.name) }
+            is BreakStmt -> stmt.label?.let { requireLabel(it) }
+            is ContinueStmt -> stmt.label?.let { requireLabel(it) }
+            is LabelStmt -> Unit
+        }
+    }
+
+    /**
+     * The labels defined by [stmts], in source order: the statement walk of
+     * [checkStmt], with [FunctionLit] as a boundary — a literal's body is a
+     * different function. Throws on a duplicate name.
+     */
+    private fun collectLabels(stmts: List<Stmt>): Set<String> {
+        val out = mutableSetOf<String>()
+        stmts.forEach { visitLabelStmts(it, out) }
+        return out
+    }
+
+    private fun visitLabelStmts(s: Stmt, out: MutableSet<String>) {
+        when (s) {
+            is LabelStmt ->
+                if (!out.add(s.name)) throw SemaException("Label ${s.name} already defined")
+            is BlockStmt -> s.body.forEach { visitLabelStmts(it, out) }
+            is IfStmt -> {
+                s.then.forEach { visitLabelStmts(it, out) }
+                s.otherwise.forEach { visitLabelStmts(it, out) }
+            }
+            is WhileStmt -> s.body.forEach { visitLabelStmts(it, out) }
+            is WhenStmt -> s.entries.forEach { it.body.forEach { visitLabelStmts(it, out) } }
+            is ExprStmt -> visitLabelExpr(s.expr, out)
+            is ReturnStmt -> s.value?.let { visitLabelExpr(it, out) }
+            else -> Unit
+        }
+    }
+
+    private fun visitLabelExpr(e: Expr, out: MutableSet<String>) {
+        when (e) {
+            is IfExpr -> {
+                e.then.forEach { visitLabelStmts(it, out) }
+                e.otherwise.forEach { visitLabelStmts(it, out) }
+            }
+            is WhenExpr -> e.entries.forEach { it.body.forEach { visitLabelStmts(it, out) } }
+            else -> Unit
+        }
+    }
+
+    private fun requireLabel(name: String) {
+        if (name !in (currentLabels ?: emptySet())) {
+            throw SemaException("Unknown label $name")
         }
     }
 
@@ -892,6 +943,8 @@ class TypeChecker {
         val outer = scope
         val literalScope = scope.child()
         scope = literalScope
+        val outerLabels = currentLabels
+        currentLabels = collectLabels(expr.body)
         try {
             expr.params.forEachIndexed { index, name ->
                 literalScope.declare(name, Symbol.DataSymbol(paramTypes[index], null, null))
@@ -909,6 +962,7 @@ class TypeChecker {
             }
         } finally {
             scope = outer
+            currentLabels = outerLabels
         }
         expr.type = WolinType(
             TypeKind.FUNCTION,

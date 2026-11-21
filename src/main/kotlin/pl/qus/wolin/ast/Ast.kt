@@ -151,11 +151,16 @@ sealed interface Ast {
     data class ContinueStmt(val label: String?) : Stmt
     data class ReturnStmt(val value: Expr?) : Stmt
     /**
-     * A `return@<address>` site. The address lives with the statement, so
-     * each site of a function carries its own target; the function-level
-     * [FunDecl.returnAt] list mirrors the same sites in source order.
+     * A `return@` site. The address form is a tail jump to a fixed address;
+     * the label form is a jump to a label of the same function. The target
+     * lives with the statement, so each site of a function carries its own;
+     * the function-level [FunDecl.returnAt] list mirrors the address sites
+     * in source order.
      */
-    data class ReturnAtStmt(val address: Int) : Stmt
+    sealed interface ReturnAtTarget : Ast
+    data class ReturnAtAddress(val address: Int) : ReturnAtTarget
+    data class ReturnAtLabel(val name: String) : ReturnAtTarget
+    data class ReturnAtStmt(val target: ReturnAtTarget) : Stmt
     data class WhenEntry(val conditions: List<Expr>, val body: List<Stmt>, val isElse: Boolean) : Ast.Stmt
 
     /**
@@ -172,6 +177,12 @@ sealed interface Ast {
      * typed AST.
      */
     data class BlockStmt(val body: List<Stmt>) : Stmt
+
+    /**
+     * A `name@` statement: a named jump target (a label) of the enclosing
+     * function. It has no type and no value.
+     */
+    data class LabelStmt(val name: String) : Stmt
 
     /**
      * `if` in expression position. The branches keep their statement
@@ -245,6 +256,10 @@ typealias BreakStmt = Ast.BreakStmt
 typealias ContinueStmt = Ast.ContinueStmt
 typealias ReturnStmt = Ast.ReturnStmt
 typealias ReturnAtStmt = Ast.ReturnAtStmt
+typealias ReturnAtTarget = Ast.ReturnAtTarget
+typealias ReturnAtAddress = Ast.ReturnAtAddress
+typealias ReturnAtLabel = Ast.ReturnAtLabel
+typealias LabelStmt = Ast.LabelStmt
 typealias BlockStmt = Ast.BlockStmt
 typealias IfExpr = Ast.IfExpr
 typealias WhenExpr = Ast.WhenExpr

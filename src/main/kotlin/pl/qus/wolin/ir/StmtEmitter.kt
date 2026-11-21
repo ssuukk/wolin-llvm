@@ -22,6 +22,8 @@ import pl.qus.wolin.ast.GlobalDecl
 import pl.qus.wolin.ast.IfExpr
 import pl.qus.wolin.ast.IfStmt
 import pl.qus.wolin.ast.LocalDecl
+import pl.qus.wolin.ast.ReturnAtAddress
+import pl.qus.wolin.ast.ReturnAtLabel
 import pl.qus.wolin.ast.ReturnAtStmt
 import pl.qus.wolin.ast.ReturnStmt
 import pl.qus.wolin.ast.Stmt
@@ -166,8 +168,13 @@ class StmtEmitter(private val b: IrBuilder) {
                 terminated = true
             }
             is ReturnAtStmt -> {
-                ReturnAtEmitter(b).emit(s.address)
-                terminated = true
+                when (val target = s.target) {
+                    is ReturnAtAddress -> {
+                        ReturnAtEmitter(b).emit(target.address)
+                        terminated = true
+                    }
+                    is ReturnAtLabel -> throw error("labelled return not emitted yet")
+                }
             }
             is BreakStmt -> {
                 val target = loops.lastOrNull() ?: throw error("break outside a loop")

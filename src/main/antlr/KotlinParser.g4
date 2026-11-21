@@ -297,6 +297,7 @@ statements
 statement
     : declaration
     | blockLevelExpression
+    | labelDefinition
     ;
 
 blockLevelExpression

@@ -145,6 +145,7 @@ class AstBuilder {
             declaration.classDeclaration()?.let { unsupported("class declaration") }
             declaration.typeAlias()?.let { unsupported("type alias") }
         }
+        ctx.labelDefinition()?.let { return LabelStmt(it.LabelDefinition().text.removeSuffix("@")) }
         val expression = ctx.blockLevelExpression()?.expression() ?: unsupported("statement")
         bareWhen(expression)?.let { return buildWhen(it) }
         return try {
@@ -259,7 +260,7 @@ class AstBuilder {
                     val address = (result as? IntLit)?.value
                         ?: unsupported("return@<label>")
                     returnAtSink?.add(ReturnAt(address.toInt()))
-                    throw StmtSignal(ReturnAtStmt(address.toInt()))
+                    throw StmtSignal(ReturnAtStmt(ReturnAtAddress(address.toInt())))
                 }
                 unsupported("label '$label'")
             }
@@ -436,9 +437,10 @@ class AstBuilder {
         if (ctx.THROW() != null) unsupported("throw expression")
         val value = ctx.expression()?.let { buildExpression(it) }
         val stmt = when {
-            ctx.RETURN_AT() != null -> unsupported("return@<label>")
-            ctx.BREAK_AT() != null -> unsupported("break@<label>")
-            ctx.CONTINUE_AT() != null -> unsupported("continue@<label>")
+            ctx.RETURN_AT() != null ->
+                ReturnAtStmt(ReturnAtLabel(ctx.RETURN_AT().text.removePrefix("return@")))
+            ctx.BREAK_AT() != null -> BreakStmt(ctx.BREAK_AT().text.removePrefix("break@"))
+            ctx.CONTINUE_AT() != null -> ContinueStmt(ctx.CONTINUE_AT().text.removePrefix("continue@"))
             ctx.RETURN() != null -> ReturnStmt(value)
             ctx.BREAK() != null -> BreakStmt(null)
             ctx.CONTINUE() != null -> ContinueStmt(null)
