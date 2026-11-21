@@ -193,7 +193,8 @@ private fun compileFiles(inputs: List<Path>): List<CompiledFile>? {
     val program = try {
         ProgramBuilder().build(sources)
     } catch (e: SemaException) {
-        System.err.println("error: ${e.message}")
+        val msg = e.line?.let { "${e.message} (line $it)" } ?: e.message
+        System.err.println("error: $msg")
         return null
     }
     return emitFiles(program)

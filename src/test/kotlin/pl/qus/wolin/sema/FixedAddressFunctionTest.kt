@@ -11,8 +11,8 @@ import kotlin.test.assertTrue
 /**
  * The checker rules for fixed-address functions (kernal calls): the
  * parameters must be single CPU registers, a return type must name the
- * register it comes from, and only `ubyte` (one register) or `uword`
- * (a register pair) may be returned.
+ * register it comes from (`ubyte` one register, `uword` a register pair),
+ * and a `bool` return is the Carry flag (CPU.C).
  */
 class FixedAddressFunctionTest {
 
@@ -90,5 +90,23 @@ class FixedAddressFunctionTest {
         typeChecker("fun readst^0xffb7(lfn: ubyte^CPU.A, ch: ubyte^CPU.Y, dev: ubyte^CPU.X): ubyte^CPU.A")
         typeChecker("fun membot^0xff9c(): uword^CPU.XY")
         typeChecker("fun f^0xff00(a: ubyte^CPU.A): uword^CPU.AX")
+    }
+
+    @Test fun `a bool return is accepted without a location`() {
+        typeChecker("fun kopen^0xffc0(): bool")
+    }
+
+    @Test fun `a bool return pinned to the carry flag is accepted`() {
+        typeChecker("fun kopen^0xffc0(): bool^CPU.C")
+    }
+
+    @Test fun `a bool return pinned to a non-carry flag is rejected`() {
+        val e = assertThrows<SemaException> {
+            typeChecker("fun f^0xff00(): bool^CPU.I")
+        }
+        assertEquals(
+            "Fixed address function f returns a bool from the Carry flag; a location must be CPU.C, not CPU.I",
+            e.message,
+        )
     }
 }

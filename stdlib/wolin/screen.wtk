@@ -1,0 +1,61 @@
+package wolin
+
+import c64.kernal.*
+
+var screen: ubyte[uword]^0x0400
+var colorRam: ubyte[uword]^0xd800
+
+// Write [x] to the screen: every byte up to the NUL terminator goes
+// through CHROUT. The index is a ubyte, so strings are capped at 255
+// bytes (the v1 limit on string indexing in general).
+fun print(x: string) {
+    var i: ubyte = 0
+    while (x[i] != 0) {
+        chrout(x[i])
+        i++
+    }
+}
+
+fun println(x: string) {
+    print(x)
+    chrout(13)
+}
+
+// The screen code for a PETSCII byte.
+//
+// Screen RAM holds screen codes, not PETSCII: the VIC-II indexes the
+// character ROM by the screen code, and the two differ. CHROUT converts
+// between them on the way to the screen, so a program that writes screen
+// RAM directly has to convert itself.
+//
+// The mapping was measured on a C64: every PETSCII byte was sent through
+// CHROUT and the resulting screen RAM read back.
+//
+// The $40 bit carries the case, which is why the halves of the range swap:
+// PETSCII $41 is a lowercase 'a' and screen code $41 is an uppercase 'A'.
+fun screenCode(p: ubyte): ubyte {
+    if (p >= 0x20 && p <= 0x3F) { return p }
+    if (p >= 0x40 && p <= 0x5F) { return p - 0x40 }
+    if (p >= 0x60 && p <= 0x7F) { return p - 0x20 }
+    if (p >= 0x80 && p <= 0x9F) { return 0x00 }
+    if (p >= 0xA0 && p <= 0xBF) { return p - 0x40 }
+    if (p >= 0xC0 && p <= 0xFE) { return p - 0x80 }
+    // The KERNAL maps $FF to $5E rather than $7F.
+    return 0x5E
+}
+
+// Write [s] to the screen at row [row], column [col], in colour [color].
+//
+// The string is PETSCII, so every byte is converted to its screen code
+// before it goes into screen RAM.
+fun printAt(row: ubyte, col: ubyte, s: string, color: ubyte) {
+    var i: ubyte = 0
+    while (s[i] != 0) {
+        val at = row.toUword() * 40 + col.toUword() + i.toUword()
+        screen[at] = screenCode(s[i])
+        colorRam[at] = color
+        i++
+    }
+}
+
+fun clearScreen^0xe544()

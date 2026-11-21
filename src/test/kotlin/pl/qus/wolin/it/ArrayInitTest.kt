@@ -45,8 +45,8 @@ class ArrayInitTest {
             }
             """
         )
-        assertEquals('H'.code, bytes[0].toInt() and 0xFF)
-        assertEquals('I'.code, bytes[1].toInt() and 0xFF)
+        assertEquals(0xC8, bytes[0].toInt() and 0xFF)
+        assertEquals(0xC9, bytes[1].toInt() and 0xFF)
         assertEquals(0, bytes[2].toInt() and 0xFF)
     }
 }

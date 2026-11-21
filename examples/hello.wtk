@@ -1,0 +1,53 @@
+// hello.wtk - print text, then cycle the border and background through
+// all 16 C64 palette colors.
+//
+// Build:
+//   wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk \
+//       examples/hello.wtk -o hello.prg
+
+package demo.hello
+
+import wolin.println
+import c64.kernal.chrout
+import c64.vic.*
+
+// Screen RAM and the per-character color RAM as fixed-address windows.
+var screen: ubyte[uword]^0x0400
+var colorRam: ubyte[uword]^0xd800
+
+fun clearScreen() {
+    var i: uword = 0
+    while (i < 1000) {
+        screen[i] = 32 // PETSCII space
+        i++
+    }
+}
+
+fun main() {
+    clearScreen()
+    chrout(19) // reverse cursor: home the text cursor to row 0, col 0
+    println("HELLO FROM WOLIN!")
+    println("")
+    println("THIS PROGRAM CLEARED THE SCREEN,")
+    println("PRINTED THIS TEXT, AND NOW CYCLES")
+    println("THE BORDER AND BACKGROUND THROUGH")
+    println("ALL 16 C64 PALETTE COLORS.")
+
+    var c: ubyte = 0
+    while (true) {
+        borderColor = c
+        var bg: ubyte = c + 8
+        if (bg > 15) { bg = bg - 16 }
+        backgroundColor0 = bg
+        backgroundColor1 = bg
+        backgroundColor2 = bg
+        backgroundColor3 = bg
+
+        // busy-wait delay of about 0.2 s
+        var i: uword = 0
+        while (i < 25000) { i++ }
+
+        c = c + 1
+        if (c > 15) { c = 0 }
+    }
+}

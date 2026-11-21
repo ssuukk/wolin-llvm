@@ -74,3 +74,40 @@ fun emitIr(source: String): String {
         workDir.toFile().deleteRecursively()
     }
 }
+
+/**
+ * Compile [body] as the body of a `main` file, together with the two stdlib
+ * files, run it under VICE, and return screen memory $0400-$040F.
+ *
+ * The stdlib files are the ones in `stdlib/`, so the test sees the same
+ * `print` and `printAt` the examples use.
+ */
+fun runStdlibProgram(body: String): ByteArray {
+    val dir = Files.createTempDirectory("wolinc-stdlib-it")
+    val main = dir.resolve("main.wtk")
+    main.writeText(
+        "package app\n" +
+            "import wolin.printAt\n" +
+            "fun main() {\n" +
+            "    $body\n" +
+            "    while (true) {}\n" +
+            "}"
+    )
+    val stdlib = Path.of("stdlib")
+    val output = dir.resolve("out.prg").toAbsolutePath()
+    val sdk = SdkLocator.locate(
+        env = System.getenv(),
+        globRoots = listOf(Path.of(System.getProperty("user.home"), ".local/share/rust-mos")),
+    )
+    val workDir = Files.createTempDirectory("wolinc-stdlib-it-ir")
+    try {
+        val linked = compileToPrgFile(
+            listOf(stdlib.resolve("c64/kernal.wtk"), stdlib.resolve("wolin/screen.wtk"), main),
+            output, sdk, workDir,
+        )
+        if (linked == null) error("wolinc failed to compile the program")
+        return ViceRunner().run(output, 0x0400, 0x040F)
+    } finally {
+        workDir.toFile().deleteRecursively()
+    }
+}

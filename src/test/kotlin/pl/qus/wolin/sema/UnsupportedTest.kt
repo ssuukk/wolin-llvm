@@ -35,8 +35,43 @@ class UnsupportedTest {
         assertRejected("class C { }")
     }
 
-    @Test fun `objects are rejected`() {
-        assertRejected("object O { }")
+    @Test fun `external function modifier is rejected`() {
+        assertRejected("external fun f() { }")
+    }
+
+    @Test fun `cc65 function modifier is rejected`() {
+        assertRejected("cc65 fun f() { }")
+    }
+
+    @Test fun `suspend function modifier is rejected`() {
+        assertRejected("suspend fun f() { }")
+    }
+
+    @Test fun `operator function modifier is rejected`() {
+        assertRejected("operator fun f() { }")
+    }
+
+    @Test fun `infix function modifier is rejected`() {
+        assertRejected("infix fun f() { }")
+    }
+
+    @Test fun `inline function modifier is rejected`() {
+        assertRejected("inline fun f() { }")
+    }
+
+    @Test fun `tailrec function modifier is rejected`() {
+        assertRejected("tailrec fun f() { }")
+    }
+
+    @Test fun `visibility function modifiers are rejected`() {
+        assertRejected("public fun f() { }")
+        assertRejected("private fun f() { }")
+        assertRejected("internal fun f() { }")
+        assertRejected("protected fun f() { }")
+    }
+
+    @Test fun `interrupt function modifier stays supported`() {
+        check("interrupt fun f() { }")
     }
 
     @Test fun `a val cannot be reassigned`() {

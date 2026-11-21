@@ -45,6 +45,12 @@ sealed interface VarStorage {
 
     /** A local variable: the entry-block [ptr] of its `alloca`. */
     data class Local(val ptr: IrValue) : VarStorage
+
+    /**
+     * A CPU status-flag variable: the [reg] register (`CPU.I` in v1), no
+     * storage. A read emits `CpuAccessors.flagRead`; a write emits `sei`/`cli`.
+     */
+    data class CpuFlag(val reg: String) : VarStorage
 }
 
 /**
@@ -190,6 +196,26 @@ class ExprEmitter(
                 val ptr = fixedPtr(s.address, element)
                 if (addressed) ptr else b.instr(ty, "load ${ty.llvmName()}, ptr ${ptr.name}")
             }
+            is VarStorage.CpuFlag -> CpuAccessors.flagRead(b, s.reg)
+        }
+    }
+    private fun loadVar(s: VarStorage, ty: IrType): IrValue = when (s) {
+        is VarStorage.Param -> s.value
+        is VarStorage.Global -> b.instr(ty, "load ${ty.llvmName()}, ptr @${s.name}")
+        is VarStorage.Local -> b.instr(ty, "load ${ty.llvmName()}, ptr ${s.ptr.name}")
+        is VarStorage.Fixed -> b.instr(ty, "load ${ty.llvmName()}, ptr ${fixedPtr(s.address, ty).name}")
+        is VarStorage.CpuFlag -> CpuAccessors.flagRead(b, s.reg)
+    }
+
+    private fun storeVar(s: VarStorage, v: IrValue, ty: IrType) {
+        when (s) {
+            is VarStorage.Param -> throw error("Cannot assign to a parameter")
+            is VarStorage.Global -> b.instr(IrType.Void, "store ${ty.llvmName()} ${v.name}, ptr @${s.name}")
+            is VarStorage.Local -> b.instr(IrType.Void, "store ${ty.llvmName()} ${v.name}, ptr ${s.ptr.name}")
+            // A plain store to a hardware register would be optimised away.
+            is VarStorage.Fixed ->
+                b.instr(IrType.Void, "store volatile ${ty.llvmName()} ${v.name}, ptr ${fixedPtr(s.address, ty).name}")
+            is VarStorage.CpuFlag -> CpuAccessors.writeFlag(b, s.reg, v)
         }
     }
 
@@ -403,24 +429,6 @@ class ExprEmitter(
     }
 
     // ---- storage ------------------------------------------------------------
-
-    private fun loadVar(s: VarStorage, ty: IrType): IrValue = when (s) {
-        is VarStorage.Param -> s.value
-        is VarStorage.Global -> b.instr(ty, "load ${ty.llvmName()}, ptr @${s.name}")
-        is VarStorage.Local -> b.instr(ty, "load ${ty.llvmName()}, ptr ${s.ptr.name}")
-        is VarStorage.Fixed -> b.instr(ty, "load ${ty.llvmName()}, ptr ${fixedPtr(s.address, ty).name}")
-    }
-
-    private fun storeVar(s: VarStorage, v: IrValue, ty: IrType) {
-        when (s) {
-            is VarStorage.Param -> throw error("Cannot assign to a parameter")
-            is VarStorage.Global -> b.instr(IrType.Void, "store ${ty.llvmName()} ${v.name}, ptr @${s.name}")
-            is VarStorage.Local -> b.instr(IrType.Void, "store ${ty.llvmName()} ${v.name}, ptr ${s.ptr.name}")
-            // A plain store to a hardware register would be optimised away.
-            is VarStorage.Fixed ->
-                b.instr(IrType.Void, "store volatile ${ty.llvmName()} ${v.name}, ptr ${fixedPtr(s.address, ty).name}")
-        }
-    }
 
     /** Store [v] to the fixed [address] — the same volatile store fixed-address variables use. */
     fun emitStoreFixed(address: Int, v: IrValue, ty: IrType) {

@@ -12,19 +12,20 @@
 //                  01 -> $d025, 10 -> $d026, 11 -> $d027; B2 = 1 (the
 //                  per-row multicolor flag).
 //
-// The sprite shapes are stored in static arrays at $0800 and $0900
-// (just below the C64 BASIC ROM, safe to keep across program runs).
+// The sprite shapes are stored in static arrays at $02000 and $02040
+// (free VIC-bank-0 RAM, clear of the loaded program).
 // Sprite pointers ($07F8/$07F9) are set so the VIC-II reads directly
 // from those arrays.
 //
 // Build:
-//   wolinc stdlib/c64-kernal.wtk stdlib/std.wtk stdlib/vic.wtk \
-//       examples/sprites.wtk -o sprites.prg
+//   java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt \
+//    stdlib/c64/kernal.wtk stdlib/wolin/screen.wtk stdlib/c64/vic.wtk \
+//    examples/sprites.wtk -o examples/sprites.prg
 
 package demo.sprites
 
-import c64.kernal.chrout
 import c64.vic.*
+import wolin.*
 
 var screen: ubyte[uword]^0x0400
 var colorRam: ubyte[uword]^0xd800
@@ -37,21 +38,12 @@ fun clearScreen() {
     }
 }
 
-fun putText(row: ubyte, col: ubyte, s: string) {
-    var i: ubyte = 0
-    while (s[i] != 0) {
-        screen[row.toUword() * 40 + col.toUword() + i.toUword()] = s[i] & 0xbf
-        colorRam[row.toUword() * 40 + col.toUword() + i.toUword()] = 1
-        i++
-    }
-}
-
 // --- sprite 0: a 1-color smiley (face ON, eyes and mouth OFF) ---
 
 // Sprite shape as a static array: 16 rows x 3 bytes (B0 B1 B2), declared
 // with an array initialiser. Element i -> index i; the rest of the array
 // stays zero. Binary constants, three bytes per row.
-var smiley: ubyte[ubyte]^0x0800 = [
+var smiley: ubyte[ubyte]^0x2000 = [
     0b00000000, 0b00000000, 0b00000000,
     0b00001111, 0b11110000, 0b00000000,
     0b00111111, 0b11111100, 0b00000000,
@@ -67,14 +59,19 @@ var smiley: ubyte[ubyte]^0x0800 = [
     0b00110000, 0b00001100, 0b00000000,
     0b00111111, 0b11111100, 0b00000000,
     0b00001111, 0b11110000, 0b00000000,
-    0b00000000, 0b00000000, 0b00000000
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000
 ]
 
 // --- sprite 1: multicolor arrow (pink shaft, yellow head) ---
 
 // Arrow shape: 16 rows x 3 bytes (B0 B1 B2); B2 is the multicolor row
 // flag (1 here, so B0/B1 carry 2-bit color pairs).
-var arrow: ubyte[ubyte]^0x0880 = [
+var arrow: ubyte[ubyte]^0x2040 = [
     0b00000000, 0b00000000, 0b00000001,
     0b00000000, 0b00000000, 0b00000001,
     0b00000000, 0b00001100, 0b00000001,
@@ -90,6 +87,11 @@ var arrow: ubyte[ubyte]^0x0880 = [
     0b01010000, 0b00000000, 0b00000001,
     0b00000000, 0b00000000, 0b00000001,
     0b00000000, 0b00000000, 0b00000001,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000,
     0b00000000, 0b00000000, 0b00000001
 ]
 
@@ -98,57 +100,27 @@ fun main() {
     // 8 bytes after the 1000-byte screen matrix. With screen base
     // $0400, the pointers are at $07F8-$07FF. Each pointer is a block
     // number; data address = block * 64 within the current VIC bank.
-    //   block 0x20 -> $0800 (sprite 0: smiley)
-    //   block 0x22 -> $0880 (sprite 1: arrow)
-    screen[0x3F8] = 0x20
-    screen[0x3F9] = 0x22
+    //   block 0x80 -> $2000 (sprite 0: smiley)
+    //   block 0x81 -> $2040 (sprite 1: arrow)
+    screen[0x3F8] = 0x80
+    screen[0x3F9] = 0x81
 
     clearScreen()
-    putText(16, 0, "SPRITE 0: 1-COLOR SMILEY")
-    putText(20, 0, "SPRITE 1: MULTICOLOR ARROW")
+    printAt(16, 0, "SPRITE 0: 1-COLOR SMILEY", 7)
+    printAt(20, 0, "SPRITE 1: MULTICOLOR ARROW", 7)
 
-    borderColor = 6
-    backgroundColor0 = 0
-    backgroundColor1 = 0
-    backgroundColor2 = 0
-    backgroundColor3 = 9 // the arrow shaft color: pair 01 -> $d025 (pink)
+    borderColor = 1
+    backgroundColor0 = 2
+    backgroundColor1 = 3
+    backgroundColor2 = 4
+    backgroundColor3 = 5 // the arrow shaft color: pair 01 -> $d025 (pink)
     multicolorBackground1 = 7 // the arrow head color: pair 11 -> $d027
 
     spriteColor0 = 7 // the smiley: yellow
     spriteEnable = 3 // sprites 0 and 1
     spriteMulticolor = 0x02 // bit 1: sprite 2 (sprite 1 zero-based) in multicolor
-    sprite0Y = 40
-    sprite1Y = 100
-
-    var x0: uword = 0
-    var x1: uword = 300
-    var d0: ubyte = 1
-    var d1: ubyte = 0
-    while (true) {
-        if (d0 == 1) {
-            x0 = x0 + 1
-            if (x0 > 300) { x0 = 300; d0 = 0 }
-        } else {
-            x0 = x0 - 1
-            if (x0 == 65535) { x0 = 0; d0 = 1 }
-        }
-        if (d1 == 1) {
-            x1 = x1 + 1
-            if (x1 > 300) { x1 = 300; d1 = 0 }
-        } else {
-            x1 = x1 - 1
-            if (x1 == 65535) { x1 = 0; d1 = 1 }
-        }
-        sprite0X = x0.toUbyte()
-        sprite1X = x1.toUbyte()
-        // bit 8 of a sprite X coordinate lives in $d010: bit 7 for
-        // sprite 0, bit 6 for sprite 1.
-        var hi: ubyte = 0
-        if (x0 > 255) { hi = hi | 0x80 }
-        if (x1 > 255) { hi = hi | 0x40 }
-        spriteXHigh = hi
-
-        var i: uword = 0
-        while (i < 3000) { i++ }
-    }
+    sprite0X = 100
+    sprite0Y = 100
+    sprite1X = 200
+    sprite1Y = 200
 }

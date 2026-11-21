@@ -15,6 +15,7 @@ import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.ExprStmt
 import pl.qus.wolin.ast.ForeignGlobal
 import pl.qus.wolin.ast.FixedAddress
+import pl.qus.wolin.ast.CpuRegister
 import pl.qus.wolin.ast.FixedArray
 import pl.qus.wolin.ast.FunDecl
 import pl.qus.wolin.ast.GlobalDecl
@@ -86,15 +87,19 @@ class StmtEmitter(private val b: IrBuilder) {
         // reference names the file that declares it. These are declared
         // first: the file's own globals shadow them.
         for (foreign in foreignGlobals) {
-            vars.declare(
-                foreign.decl.name,
-                VarStorage.Global("${foreign.prefix}.${foreign.decl.name}"),
-            )
+            val storage = when (val loc = foreign.decl.location) {
+                is FixedAddress -> VarStorage.Fixed(loc.address)
+                is FixedArray -> VarStorage.Fixed(loc.address)
+                is CpuRegister -> VarStorage.CpuFlag(loc.name)
+                else -> VarStorage.Global("${foreign.prefix}.${foreign.decl.name}")
+            }
+            vars.declare(foreign.decl.name, storage)
         }
         for (g in globals) {
             val storage = when (val loc = g.location) {
                 is FixedAddress -> VarStorage.Fixed(loc.address)
                 is FixedArray -> VarStorage.Fixed(loc.address)
+                is CpuRegister -> VarStorage.CpuFlag(loc.name)
                 else -> VarStorage.Global("$prefix.${g.name}")
             }
             vars.declare(g.name, storage)
@@ -103,7 +108,7 @@ class StmtEmitter(private val b: IrBuilder) {
 
         val decls = mutableListOf<LocalDecl>()
         collectLocalDecls(fn.body, decls)
-        decls.filter { it.location !is FixedAddress && it.location !is FixedArray }
+        decls.filter { it.location !is FixedAddress && it.location !is FixedArray && it.location !is CpuRegister }
              .forEach { localSlots[it] = b.alloca(TypeMapper.ir(it.type)) }
 
         if (returnsLastExpression) {
@@ -191,6 +196,12 @@ class StmtEmitter(private val b: IrBuilder) {
                 d.init?.let { init -> emitArrayInit(init, loc.address, d.type) }
                 vars.declare(d.name, VarStorage.Fixed(loc.address))
             }
+            is CpuRegister -> {
+                d.init?.let { init ->
+                    CpuAccessors.writeFlag(b, loc.name, expr.emit(init))
+                }
+                vars.declare(d.name, VarStorage.CpuFlag(loc.name))
+            }
             else -> {
                 val ptr = localSlots[d] ?: throw error("Local ${d.name} has no slot")
                 d.init?.let { init ->
@@ -199,7 +210,7 @@ class StmtEmitter(private val b: IrBuilder) {
                 }
                 vars.declare(d.name, VarStorage.Local(ptr))
             }
-        }
+}
     }
 
     /**

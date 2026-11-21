@@ -114,6 +114,74 @@ object CpuAccessors {
         val shifted = b.instr(IrType.I16, "shl i16 ${highWide.name}, 8")
         return b.instr(IrType.I16, "or i16 ${shifted.name}, ${lowWide.name}")
     }
+
+    /**
+     * The status-register bit of a flag register: [flagMask]("CPU.I") is 0x40.
+     *
+     * A flag is a single bit in P; a variable pinned to one of these names
+     * (`CPU.C`, `CPU.I`, `CPU.N`, `CPU.Z`) reads that bit as a `bool`.
+     */
+    fun flagMask(reg: String): Int = when (reg) {
+        "CPU.C" -> 0x01
+        "CPU.I" -> 0x40
+        "CPU.N" -> 0x80
+        "CPU.Z" -> 0x02
+        else -> throw error("No flag accessor for register $reg")
+    }
+
+    /**
+     * Reads a flag register into an [IrType.I1] value, `true` when the bit
+     * is set.
+     */
+    fun flagRead(b: IrBuilder, reg: String): IrValue {
+        val raw = readFlag(b, flagMask(reg))
+        return b.instr(IrType.I1, "icmp ne i8 ${raw.name}, 0")
+    }
+
+    /**
+     * Sets or clears a flag register from an [IrValue] of [IrType.I1].
+     *
+     * The value is an SSA condition, so a branch chooses the instruction:
+     * `true` sets the flag, `false` clears it. A value that is already the
+     * constant `true` or `false` (the spelling a [BoolLit] carries) skips
+     * the branch and emits the one instruction directly, so
+     * `maskInterrupts = true` lowers to a bare `sei`.
+     */
+    fun writeFlag(b: IrBuilder, reg: String, value: IrValue) {
+        val set = setInsn(reg)
+        val clear = clearInsn(reg)
+        when (value.name) {
+            "true" -> b.instr(IrType.Void, "call void asm sideeffect \"$set\", \"\"()")
+            "false" -> b.instr(IrType.Void, "call void asm sideeffect \"$clear\", \"\"()")
+            else -> {
+                val setL = b.labelFor("flag.$reg.set")
+                val clearL = b.labelFor("flag.$reg.clear")
+                val endL = b.labelFor("flag.$reg.end")
+                b.condBranch(value, setL, clearL)
+                b.addBlockAt(setL)
+                b.instr(IrType.Void, "call void asm sideeffect \"$set\", \"\"()")
+                b.branch(endL)
+                b.addBlockAt(clearL)
+                b.instr(IrType.Void, "call void asm sideeffect \"$clear\", \"\"()")
+                b.branch(endL)
+                b.addBlockAt(endL)
+            }
+        }
+    }
+
+    /** The flag-set instruction of a register (`CPU.I` is `sei`, `CPU.C` is `sec`). */
+    private fun setInsn(reg: String): String = when (reg) {
+        "CPU.I" -> "sei"
+        "CPU.C" -> "sec"
+        else -> throw error("No set instruction for flag register $reg")
+    }
+
+    /** The flag-clear instruction of a register (`CPU.I` is `cli`, `CPU.C` is `clc`). */
+    private fun clearInsn(reg: String): String = when (reg) {
+        "CPU.I" -> "cli"
+        "CPU.C" -> "clc"
+        else -> throw error("No clear instruction for flag register $reg")
+    }
 }
 
 /**

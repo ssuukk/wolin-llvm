@@ -99,6 +99,21 @@ class IrBuilder {
         fn.blocks += Block(fn.labelFor(name))
     }
 
+    /**
+     * Reserves [wanted] as a label and returns it: the wanted name, or the
+     * next free `bbN` when it is taken.
+     *
+     * A reserved label is opened with [addBlockAt], which keeps the name
+     * [addBlock] would have resolved a second time.
+     */
+    fun labelFor(wanted: String): String = requireFunction().labelFor(wanted)
+
+    /** Opens a block under the already reserved [label]. */
+    fun addBlockAt(label: String) {
+        val fn = requireFunction()
+        fn.blocks += Block(label)
+    }
+
     /** The label of the current block. */
     fun block(): String = requireFunction().current.label
     /**

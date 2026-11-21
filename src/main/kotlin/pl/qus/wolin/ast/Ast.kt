@@ -82,6 +82,8 @@ sealed interface Ast {
         val declaredType: WolinType? = null,
         /** The constant the initialiser folds to; filled by the checker, null without an initialiser. */
         var constValue: ConstValue? = null,
+        /** The source line of the declaration, for error messages. */
+        val line: Int? = null,
     ) : Ast
 
     data class FunDecl(
@@ -138,7 +140,9 @@ sealed interface Ast {
         val isVal: Boolean,
         val location: Location? = null,
         /** The type as written in the source, or null when there was none. */
-        val declaredType: WolinType? = null
+        val declaredType: WolinType? = null,
+        /** The source line of the declaration, for error messages. */
+        val line: Int? = null,
     ) : Stmt
     data class ExprStmt(val expr: Expr) : Stmt
     data class IfStmt(val cond: Expr, val then: List<Stmt>, val otherwise: List<Stmt>) : Stmt

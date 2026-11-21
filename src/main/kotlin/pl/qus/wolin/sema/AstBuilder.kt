@@ -58,7 +58,8 @@ class AstBuilder {
             init = init,
             location = info?.location,
             isVal = ctx.VAL() != null,
-            declaredType = info?.type
+            declaredType = info?.type,
+            line = ctx.start.line,
         )
     }
 
@@ -73,14 +74,22 @@ class AstBuilder {
             init = init,
             isVal = ctx.VAL() != null,
             location = info?.location,
-            declaredType = info?.type
+            declaredType = info?.type,
+            line = ctx.start.line,
         )
     }
 
     private fun buildFunction(ctx: KotlinParser.FunctionDeclarationContext): FunDecl {
         val name = ctx.identifier()?.let { qualifiedName(it) } ?: unsupported("anonymous function")
-        val isInterrupt = ctx.modifierList()?.modifier().orEmpty()
-            .any { it.functionModifier()?.INTERRUPT() != null }
+        val modifiers = ctx.modifierList()?.modifier().orEmpty()
+        for (m in modifiers) {
+            val fm = m.functionModifier()
+            if (fm == null || fm.INTERRUPT() == null) {
+                val kw = m.children?.firstOrNull()?.text ?: "function modifier"
+                unsupported("function modifier '$kw'")
+            }
+        }
+        val isInterrupt = modifiers.any { it.functionModifier()?.INTERRUPT() != null }
         val fixedAddress = ctx.locationReference()?.let { locationAddress(it) }
         val params = ctx.functionValueParameters()?.functionValueParameter().orEmpty().map { buildParam(it) }
         val retInfo = ctx.type().lastOrNull { type ->
@@ -604,45 +613,49 @@ class AstBuilder {
      * `\r`, `\0`, `\\`, `\"`, `\'` and `\uXXXX`. The decoded bytes are what
      * the IR constant spells, so the emitter never sees a backslash.
      */
+
     private fun stringBytes(text: String): ByteArray {
         val body = when {
             text.startsWith("\"\"\"") -> text.removePrefix("\"\"\"").removeSuffix("\"\"\"")
             else -> text.removePrefix("\"").removeSuffix("\"")
         }
         val out = ArrayList<Byte>(body.length)
-        var i = 0
-        while (i < body.length) {
-            val c = body[i]
-            if (c == '$' && i + 1 < body.length && body[i + 1] == '{') {
+        // The literal is walked by code point, not by Char: the PETSCII set
+        // includes characters outside the Basic Multilingual Plane (the
+        // U+1FBxx block elements), which a Char would split into surrogates.
+        val points = body.codePoints().toArray()
+        var p = 0
+        while (p < points.size) {
+            val cp = points[p]
+            if (cp == '$'.code && p + 1 < points.size && points[p + 1] == '{'.code) {
                 unsupported("string interpolation")
             }
-            if (c != '\\' || i + 1 >= body.length) {
-                out += c.code.toByte()
-                i++
+            if (cp != '\\'.code || p + 1 >= points.size) {
+                out += PetsciiConverter.codePointToPetscii(cp)
+                p++
                 continue
             }
-            when (val e = body[i + 1]) {
-                'n' -> out += 0x0A.toByte()
-                't' -> out += 0x09.toByte()
-                'r' -> out += 0x0D.toByte()
-                '0' -> out += 0x00.toByte()
-                '\\' -> out += '\\'.code.toByte()
-                '"' -> out += '"'.code.toByte()
-                '\'' -> out += '\''.code.toByte()
+            when (val e = points[p + 1].toChar()) {
+                'n' -> out += PetsciiConverter.byteToPetscii(0x0A.toByte())
+                't' -> out += PetsciiConverter.byteToPetscii(0x09.toByte())
+                'r' -> out += PetsciiConverter.byteToPetscii(0x0D.toByte())
+                '0' -> out += PetsciiConverter.byteToPetscii(0x00.toByte())
+                '\\' -> out += PetsciiConverter.byteToPetscii('\\'.code.toByte())
+                '"' -> out += PetsciiConverter.byteToPetscii('"'.code.toByte())
+                '\'' -> out += PetsciiConverter.byteToPetscii('\''.code.toByte())
                 'u' -> {
-                    val hex = body.substring(i + 2, minOf(i + 6, body.length))
+                    val hex = body.substring(p + 2, minOf(p + 6, body.length))
                     val code = hex.toIntOrNull(16)
                         ?: throw SemaException("Unsupported escape \\u$hex in string literal")
-                    out += code.toByte()
-                    i += 4
+                    out += PetsciiConverter.codePointToPetscii(code)
+                    p += 4
                 }
                 else -> throw SemaException("Unsupported escape \\$e in string literal")
             }
-            i += 2
+            p += 2
         }
         return out.toByteArray()
     }
-
     // ---- helpers ----------------------------------------------------------
 
     /** Folds a left-associative operator chain into nested binary operations. */

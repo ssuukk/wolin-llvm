@@ -18,9 +18,9 @@ class ArrayInitIrTest {
         assertTrue(out.contains("@\"t.w\" = global [65536 x i16] [i16 0, i16 1024, i16 0"), out)
     }
 
-    @Test fun `an empty list spells zeroinit`() {
+    @Test fun `an empty list spells zeroinitializer`() {
         val out = ir("var a: ubyte[ubyte] = []\nfun main() { while (true) {} }")
-        assertTrue(out.contains("@\"t.a\" = global [256 x i8] zeroinit"), out)
+        assertTrue(out.contains("@\"t.a\" = global [256 x i8] zeroinitializer"), out)
     }
 
     @Test fun `a global fixed-address array emits volatile stores in the init function`() {
@@ -47,8 +47,8 @@ class ArrayInitIrTest {
         val src = "var s: ubyte[ubyte]^0x3000 = \"hi\"\nfun main() { while (true) {} }"
         val out = ir(src)
         assertTrue(out.contains("store volatile i8"), out)
-        assertTrue(out.contains("store volatile i8 104"), out)
-        assertTrue(out.contains("store volatile i8 105"), out)
+        assertTrue(out.contains("store volatile i8 72"), out)
+        assertTrue(out.contains("store volatile i8 73"), out)
         assertTrue(out.contains("store volatile i8 0"), out)
     }
 }

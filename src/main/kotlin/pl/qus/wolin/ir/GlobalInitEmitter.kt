@@ -2,6 +2,7 @@ package pl.qus.wolin.ir
 
 import pl.qus.wolin.ast.BinaryOp
 import pl.qus.wolin.ast.Convert
+import pl.qus.wolin.ast.CpuRegister
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FixedAddress
 import pl.qus.wolin.ast.FixedArray
@@ -35,6 +36,8 @@ class GlobalInitEmitter(private val b: IrBuilder) {
             val init = g.init
             if (init == null || g.constValue == null) continue
             if (g.location is FixedAddress) continue
+            // A CPU flag variable has no storage: it is the register itself.
+            if (g.location is CpuRegister) continue
             if (g.location is FixedArray) {
                 val v = g.constValue
                 if (v is ConstValue.ArrayValue && v.elements.isNotEmpty()) {

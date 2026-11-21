@@ -1,0 +1,114 @@
+// petscii.wtk - draw frames with the Unicode box-drawing characters.
+//
+// A source string is converted to PETSCII at compile time, so the Unicode
+// box drawing, block and symbol characters below become the PETSCII bytes
+// the C64 character ROM knows:
+//
+//   ┌ ─ ┐ │ └ ┘   the frame
+//   ▌ ▄ ▎ ▏       the half blocks
+//   ▒ ○ ●         the shades and the circles
+//   ♠ ♣ ♥ ♦ ✓     the card suits
+//
+// The uppercase and lowercase letters are case-inverted on the way: an
+// uppercase 'A' in the source becomes PETSCII $C1, a lowercase 'a' becomes
+// PETSCII $41. The KERNAL inverts them again on the way to the screen, so
+// the text reads with the case it was written in.
+//
+// Build:
+//   wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk \
+//       examples/petscii.wtk -o petscii.prg
+
+package demo.petscii
+
+import c64.kernal.chrout
+import c64.vic.*
+import wolin.*
+
+var screen: ubyte[uword]^0x0400
+var colorRam: ubyte[uword]^0xd800
+
+// Clear the screen and the colour RAM.
+fun clearScreen() {
+    var i: uword = 0
+    while (i < 1000) {
+        screen[i] = 32
+        colorRam[i] = 0
+        i++
+    }
+}
+
+// A frame with [title] in it, drawn from row [row], column [col].
+// The frame is [width] cells wide and [height] rows tall.
+fun frame(row: ubyte, col: ubyte, width: ubyte, height: ubyte, title: string, color: ubyte) {
+    // The top edge: a corner, the dashes, and the other corner.
+    printAt(row, col, "┌", color)
+    var i: ubyte = 1
+    while (i < width - 1) {
+        printAt(row, col + i, "─", color)
+        i++
+    }
+    printAt(row, col + width - 1, "┐", color)
+
+    // The bottom edge.
+    printAt(row + height - 1, col, "└", color)
+    i = 1
+    while (i < width - 1) {
+        printAt(row + height - 1, col + i, "─", color)
+        i++
+    }
+    printAt(row + height - 1, col + width - 1, "┘", color)
+
+    // The sides.
+    i = 1
+    while (i < height - 1) {
+        printAt(row + i, col, "│", color)
+        printAt(row + i, col + width - 1, "│", color)
+        i++
+    }
+
+    // The title sits on the top edge, one cell in from the left corner.
+    printAt(row, col + 2, title, color)
+}
+
+fun main() {
+    clearScreen()
+    chrout(19) // reverse cursor: home the text cursor to row 0, column 0
+
+    printAt(0, 0, "PETSCII FRAMES, DRAWN FROM UNICODE SOURCE", 7)
+    printAt(1, 0, "EVERY CHARACTER IS MAPPED TO A PETSCII BYTE", 7)
+
+    frame(3, 0, 40, 3, " FRAME ", 1)
+    printAt(4, 4, "┌───┬───┐", 1)
+    printAt(4, 18, "╔═══╦═══╗", 1)
+    printAt(4, 30, "╭───┬───╮", 1)
+
+    frame(6, 0, 40, 3, " BLOCKS ", 3)
+    printAt(7, 4, "▁▂▃▄▅▆▇█", 3)
+    printAt(7, 18, "▏▎▍▌▋▊▉█", 3)
+    printAt(8, 4, "▖▗▘▝▚▞", 3)
+
+    frame(9, 0, 40, 3, " SYMBOLS ", 5)
+    printAt(10, 4, "♠ ♣ ♥ ♦", 5)
+    printAt(10, 18, "○ ● ◤ ◥", 5)
+    printAt(10, 30, "✓ ← ↑", 5)
+
+    frame(12, 0, 40, 4, " NESTED ", 2)
+    printAt(13, 4, "└───┘", 2)
+    printAt(13, 18, "╰───╯", 2)
+    printAt(14, 4, "▄▄▄▄", 2)
+    printAt(14, 18, "████", 2)
+
+    frame(16, 0, 40, 3, " CASE ", 6)
+    printAt(17, 4, "UPPERCASE ABC", 6)
+    printAt(17, 18, "lowercase abc", 6)
+
+    frame(19, 0, 40, 3, " MIXED ", 4)
+    printAt(20, 4, "┌─┐ ╔═╗ ╭─╮", 4)
+    printAt(20, 18, "├─┤ ╠═╣ ├─┤", 4)
+    printAt(20, 30, "└─┘ ╚═╝ ╰─╯", 4)
+
+    while (true) {
+        var i: uword = 0
+        while (i < 40000) { i++ }
+    }
+}

@@ -176,7 +176,7 @@ class TypeChecker {
         val type = declared ?: initType
             ?: throw SemaException("Variable ${global.name} has no type!")
         global.type = type
-        rejectCpuRegisterVariable(global.name, global.location)
+        rejectCpuRegisterVariable(global.name, global.location, type, global.line)
         if (global.init != null) {
             global.constValue = ConstFolder.fold(global.init!!, constSoFar, functionNames)
                 ?: throw SemaException("global initialiser must be a constant expression")
@@ -289,23 +289,43 @@ class TypeChecker {
             }
         }
         val retType = fn.retType ?: return
-        val register = fn.retLocation as? CpuRegister
-            ?: throw SemaException(
-                "Fixed address function ${fn.name} needs a CPU register return type"
-            )
         when (retType.kind) {
-            TypeKind.UBYTE -> if (!isSingleRegister(register.name)) {
-                throw SemaException(
-                    "Fixed address function ${fn.name} returns one register, not ${register.name}"
-                )
+            // A bool result is the Carry flag: the routine signals success or
+            // failure in CPU.C, so no register is named (an explicit location,
+            // if given, must be CPU.C).
+            TypeKind.BOOL -> {
+                val location = fn.retLocation as? CpuRegister
+                if (location != null && location.name != "CPU.C") {
+                    throw SemaException(
+                        "Fixed address function ${fn.name} returns a bool from the Carry " +
+                            "flag; a location must be CPU.C, not ${location.name}"
+                    )
+                }
             }
-            TypeKind.UWORD -> if (register.name != "CPU.AX" && register.name != "CPU.XY") {
-                throw SemaException(
-                    "Fixed address function ${fn.name} returns a register pair, not ${register.name}"
-                )
+            TypeKind.UBYTE -> {
+                val register = fn.retLocation as? CpuRegister
+                    ?: throw SemaException(
+                        "Fixed address function ${fn.name} needs a CPU register return type"
+                    )
+                if (!isSingleRegister(register.name)) {
+                    throw SemaException(
+                        "Fixed address function ${fn.name} returns one register, not ${register.name}"
+                    )
+                }
+            }
+            TypeKind.UWORD -> {
+                val register = fn.retLocation as? CpuRegister
+                    ?: throw SemaException(
+                        "Fixed address function ${fn.name} needs a CPU register return type"
+                    )
+                if (register.name != "CPU.AX" && register.name != "CPU.XY") {
+                    throw SemaException(
+                        "Fixed address function ${fn.name} returns a register pair, not ${register.name}"
+                    )
+                }
             }
             else -> throw SemaException(
-                "Fixed address function ${fn.name} can only return ubyte or uword, not $retType"
+                "Fixed address function ${fn.name} can only return ubyte, uword or bool, not $retType"
             )
         }
     }
@@ -320,14 +340,22 @@ class TypeChecker {
      * survive unrelated code. The value must be read back through a
      * fixed-address function return type, or passed as a parameter.
      */
-    private fun rejectCpuRegisterVariable(name: String, location: Location?) {
+    private fun rejectCpuRegisterVariable(name: String, location: Location?, type: WolinType, line: Int?) {
         if (location is CpuRegister) {
+            // A flag register is a single bit of P that the compiler can
+            // read and write without clobbering an accumulator: `sei`/`cli`
+            // (interrupt) and `sec`/`clc` (carry) set and clear it, so the
+            // value survives. Only the flags with a set and a clear
+            // instruction qualify.
+            val isFlag = location.name in setOf("CPU.C", "CPU.I")
+            if (isFlag && type.kind == TypeKind.BOOL) return
             throw SemaException(
                 "CPU register variable $name is not supported yet: " +
                     "the compiler owns the CPU registers, so a value written to " +
                     "one does not survive other code. Return it from a " +
                     "fixed-address function instead (e.g. " +
-                    "`fun rdtim^0xffde(): ubyte^CPU.A`), or pass it as a parameter."
+                    "`fun rdtim^0xffde(): ubyte^CPU.A`), or pass it as a parameter.",
+                line,
             )
         }
     }
@@ -362,7 +390,7 @@ class TypeChecker {
                 val type = declared ?: initType
                     ?: throw SemaException("Variable ${stmt.name} has no type!")
                 stmt.type = type
-                rejectCpuRegisterVariable(stmt.name, stmt.location)
+                rejectCpuRegisterVariable(stmt.name, stmt.location, type, stmt.line)
                 scope.declare(stmt.name, Symbol.DataSymbol(type, stmt.location, stmt.init, stmt.isVal))
             }
 

@@ -24,8 +24,8 @@ class StringTest {
                 while (true) {}
             }
         """)
-        assertEquals('h'.code, bytes[0].toInt() and 0xFF)
-        assertEquals('i'.code, bytes[1].toInt() and 0xFF)
+        assertEquals(0x48, bytes[0].toInt() and 0xFF)
+        assertEquals(0x49, bytes[1].toInt() and 0xFF)
         assertEquals(0, bytes[2].toInt() and 0xFF)
     }
 

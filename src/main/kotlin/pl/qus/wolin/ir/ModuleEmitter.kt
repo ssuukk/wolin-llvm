@@ -68,11 +68,17 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 emitFixedFunction(fn, fixed, params, mangledPrefix)
                 continue
             }
+            // Handlers that exit with a plain ret get the backend's
+            // interrupt prologue + epilogue (RTI). Handlers that exit via
+            // return@<address> emit a plain tail-jump themselves, so the
+            // unbalanced prologue they would never pop is suppressed.
+            val attributes =
+                if (fn.isInterrupt && fn.returnAt.isEmpty()) listOf("interrupt") else emptyList()
             b.startFunction(
                 "$mangledPrefix.${fn.name}",
                 TypeMapper.ir(fn.retType ?: Types.unit),
                 params,
-                attributes = if (fn.isInterrupt) listOf("interrupt") else emptyList(),
+                attributes = attributes,
             )
             stmt.startFunction(mangledPrefix, params, program.globals, fn, program.visibleGlobals)
             b.endFunction()
@@ -101,13 +107,15 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 constants += fixedGlobalLine(prefix, g, location)
                 continue
             }
+            // A CPU flag variable has no storage: it is the register itself.
+            if (location is CpuRegister) continue
             if (g.type.kind == TypeKind.ARRAY) {
                 val ety = g.type.elementType ?: throw error("Array ${g.name} has no element type")
                 val count = arrayCount(g.type)
                 val ty = TypeMapper.ir(ety).llvmName()
                 val body = when (val v = g.constValue) {
-                    is ConstValue.ArrayValue -> if (v.elements.isNotEmpty()) v.spelling else "zeroinit"
-                    else -> "zeroinit"
+                    is ConstValue.ArrayValue -> if (v.elements.isNotEmpty()) v.spelling else "zeroinitializer"
+                    else -> "zeroinitializer"
                 }
                 constants += "@\"$prefix.${g.name}\" = global [$count x $ty] $body"
                 continue
@@ -131,6 +139,9 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
      */
     private fun emitForeignGlobals(program: Program, prefix: String, constants: MutableList<String>) {
         for (foreign in program.visibleGlobals) {
+            if (foreign.decl.location is FixedAddress || foreign.decl.location is FixedArray) continue
+            // A CPU flag variable has no storage: it is the register itself.
+            if (foreign.decl.location is CpuRegister) continue
             val name = "${foreign.prefix}.${foreign.decl.name}"
             val ty = TypeMapper.ir(foreign.decl.type).llvmName()
             constants += "@$name = external global $ty"
@@ -271,16 +282,14 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
         }
         ExternalCalls().emitCall(b, address, args)
         val resultRegister = (fn.retLocation as? CpuRegister)?.name
-        if (resultRegister == null) {
-            b.ret(null)
-        } else {
-            val retType = fn.retType
-            val result = when {
-                retType != null && retType.kind == TypeKind.UWORD ->
-                    CpuAccessors.readRegisterPair(b, resultRegister)
-                else -> CpuAccessors.readRegister(b, resultRegister)
-            }
-            b.ret(result)
+        val retType = fn.retType
+        when {
+            // A bool result is the Carry flag: the kernal routine signals
+            // success or failure in CPU.C, so read it back as a bool.
+            retType?.kind == TypeKind.BOOL -> b.ret(CpuAccessors.flagRead(b, "CPU.C"))
+            resultRegister == null -> b.ret(null)
+            retType?.kind == TypeKind.UWORD -> b.ret(CpuAccessors.readRegisterPair(b, resultRegister))
+            else -> b.ret(CpuAccessors.readRegister(b, resultRegister))
         }
         b.endFunction()
     }

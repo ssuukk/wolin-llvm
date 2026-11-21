@@ -7,9 +7,8 @@ package c64.kernal
 // X low / Y high.
 //
 // v1 limitations (see REFERENCE.md, "ROM calls"):
-// - An error signalled only by the Carry flag cannot be returned (flags are
-//   not returnable); such routines declare no return type. Where the kernal
-//   leaves a status byte, check READST.
+// - An error signalled only by the Carry flag is returned as `bool` (the
+//   Carry bit itself). Where the kernal leaves a status byte, check READST.
 // - Dual-mode routines (MEMBOT, MEMTOP, PLOT) select read vs set with the
 //   Carry flag, which v1 cannot set; they are declared for the READ mode.
 
@@ -29,13 +28,14 @@ fun setnam^0xffbd()
 // SECOND ($FF93): set the secondary address (must be ORed with $60).
 fun second^0xff93(sa: ubyte^CPU.A)
 
-// KOPEN ($FFC0): open the file configured by SETLFS/SETNAM/SECOND. Error is
-// in the Carry flag (not returnable in v1). Named `kopen` to keep `open`
-// clear.
-fun kopen^0xffc0()
+// KOPEN ($FFC0): open file configured by SETLFS/SETNAM/SECOND. Returns
+// true on success (Carry clear), false on error (Carry set). Named `kopen`
+// to keep `open` clear.
+fun kopen^0xffc0(): bool
 
-// CLOSE ($FFC3): close the logical file. Error is in the Carry flag.
-fun close^0xffc3(lfn: ubyte^CPU.A)
+// CLOSE ($FFC3): close the logical file. Returns true on success (Carry
+// clear), false on error (Carry set).
+fun close^0xffc3(lfn: ubyte^CPU.A): bool
 
 // CLRCHN ($FFCC): close the input and output channels.
 fun clrchn^0xffcc()
@@ -82,9 +82,9 @@ fun untalk^0xffab()
 // via READST.
 fun load^0xffd5()
 
-// SAVE ($FFD8): save from the page in A to the address in X:Y. Error is in
-// the Carry flag.
-fun save^0xffd8(start: ubyte^CPU.A, endLo: ubyte^CPU.X, endHi: ubyte^CPU.Y)
+// SAVE ($FFD8): save from the page in A to the address in X:Y. Returns true
+// on success (Carry clear), false on error (Carry set).
+fun save^0xffd8(start: ubyte^CPU.A, endLo: ubyte^CPU.X, endHi: ubyte^CPU.Y): bool
 
 // --- Memory ---
 

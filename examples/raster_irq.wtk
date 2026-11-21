@@ -1,0 +1,124 @@
+package pl.qus.wolin
+
+// raster interrupt colour band taken from:
+// https://gist.github.com/bremensaki/8f33cd7d67b78377881c7eb7147c0f32
+
+import c64.vic.*
+import wolin.clearScreen
+
+var interruptRoutineVector: uword^0x314 // this is C64 raster interrupt vector
+var cia1InerruptCtrlReg: ubyte^0xDC0D
+var i: ubyte
+var maskInterrupts: bool^CPU.I
+
+// Sprite 0 pointer ($07F8): block 192 -> data at 192 * 64 = $3000, where
+// sprite0Shape below is initialised.
+var sprite0Pointer: ubyte^2040
+
+// A 1-color smiley (sprite 0), 16 rows x 3 bytes (B0 B1 B2) at $3000. Element
+// i -> index i; the rest of the 256-byte array stays zero. B2 = 0 on every row
+// keeps it in 1-color mode (spriteColor0 tints it).
+var sprite0Shape: ubyte[ubyte]^0x3000 = [
+    0b00000000, 0b00000000, 0b00000000,
+    0b00001111, 0b11110000, 0b00000000,
+    0b00111111, 0b11111100, 0b00000000,
+    0b01111111, 0b11111110, 0b00000000,
+    0b01111111, 0b11111110, 0b00000000,
+    0b01110011, 0b11001110, 0b00000000,
+    0b01110011, 0b11001110, 0b00000000,
+    0b01111111, 0b11111110, 0b00000000,
+    0b01111111, 0b11111110, 0b00000000,
+    0b01111000, 0b00011110, 0b00000000,
+    0b01110000, 0b00001110, 0b00000000,
+    0b01100000, 0b00000110, 0b00000000,
+    0b00110000, 0b00001100, 0b00000000,
+    0b00111111, 0b11111100, 0b00000000,
+    0b00001111, 0b11110000, 0b00000000,
+    0b00000000, 0b00000000, 0b00000000
+]
+
+fun onRasterGoto(line: ubyte, proc: uword) {
+    interruptRoutineVector = proc
+    rasterCounter = line
+}
+
+/*********************************************************
+* Raster bar
+**********************************************************/
+interrupt fun backgroundToBlue() {
+    onRasterGoto(140, backgroundToWhite)
+    borderColor = 6
+    backgroundColor0 = 6
+    interruptStatus = 0xff
+    return@0xea31
+}
+
+interrupt fun backgroundToWhite() {
+    onRasterGoto(160, backgroundToBlue)
+    borderColor = 1
+    backgroundColor0 = 1
+    interruptStatus = 0xff
+    return@0xea31
+}
+
+fun rasterBar() {
+    borderColor = 6
+    backgroundColor0 = 6
+    interruptEnable := 1
+    controlRegister1 .= 128 // High bit of raster line cleared, we're only working within single byte ranges
+    onRasterGoto(140, backgroundToBlue)
+}
+
+/*********************************************************
+* Open border
+**********************************************************/
+
+interrupt fun topRoutine() {
+    controlRegister1 := 8 // 25 rows
+    onRasterGoto(0xf9, bottomRoutine)
+    interruptStatus = 0xff
+    return@0xea31
+}
+
+interrupt fun bottomRoutine() {
+    controlRegister1 .= 8 // 24 rows
+    onRasterGoto(0xff, topRoutine)
+    interruptStatus = 0xff // at line ff set to 25 rows
+    return@0xea31
+}
+
+fun openBorder() {
+    spriteEnable := 1
+    spriteXExpansion := 1
+    spriteYExpansion := 1
+    sprite0X = 100
+    sprite0Y = 30
+    spriteColor0 = 2
+    sprite0Pointer = 192 // block 0xC0 -> sprite 0 shape at $3000
+    backgroundColor0 = 7
+    borderColor = 6
+
+    interruptEnable := 1 // Enable raster interrupts
+    controlRegister1 .= 128 // High bit of raster line cleared, we're only working within single byte ranges
+    onRasterGoto(0xf9, bottomRoutine)
+}
+
+/*********************************************************
+* Main function
+**********************************************************/
+
+fun main() {
+    //clearScreen()
+    maskInterrupts = true // Suspend interrupts during init
+    cia1InerruptCtrlReg = 0x7f // Disable CIA
+
+    //rasterBar()
+    openBorder()
+
+    maskInterrupts = false
+
+    do {
+        i++
+    } while (i<255)                               // Eternal do-nothing loop, we're done.
+
+}
