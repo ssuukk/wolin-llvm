@@ -168,7 +168,9 @@ var fresh: ubyte = ++i
   `byte`/`word` for negatives). A value that does not fit its declared type
   is "Value out of range".
 - **Negative integers:** `-1` is a byte, `-32768` a word. `var x: ubyte = -1`
-  is an error.
+  is an error. A sign-prefixed literal takes the other operand's type in a
+  binary operation, so `w == -1` on a `word` compares `word`s; without a
+  context `-1` is a `byte`.
 - **Reals:** `1.5` → `float`.
 - **Booleans:** `true`, `false`.
 - **Characters:** `'A'`, `'\n'` → `ubyte`. Escapes: `\n` `\t` `\r` `\b` `\\`

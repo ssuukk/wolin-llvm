@@ -573,7 +573,7 @@ class TypeChecker {
                 entry.conditions.forEach { condition ->
                     // A literal takes the subject's type, so `when (x: uword) { 1 -> }`
                     // compares `uword`s, exactly like `x == 1`.
-                    val condType = if (condition is IntLit && subjectType != null) {
+                    val condType = if (isContextualIntLiteral(condition) && subjectType != null) {
                         checkExpr(condition, subjectType)
                     } else {
                         checkExpr(condition, null)
@@ -701,6 +701,16 @@ class TypeChecker {
         return expr.type
     }
 
+    /**
+     * Whether [expr] is an integer literal that takes its type from context: a
+     * literal, or one with a single sign prefix. The `-`/`+` unary arms type such
+     * an operand from the expected type, so `wordValue == -1` compares `word`s,
+     * exactly like `wordValue == 1`.
+     */
+    private fun isContextualIntLiteral(expr: Expr): Boolean =
+        expr is IntLit ||
+            (expr is UnaryOp && (expr.op == "-" || expr.op == "+") && expr.operand is IntLit)
+
     private fun checkUnary(expr: UnaryOp, expected: WolinType?): WolinType {
         when (expr.op) {
             "-" -> {
@@ -717,9 +727,16 @@ class TypeChecker {
             }
 
             "+" -> {
-                val type = checkExpr(expr.operand, null)
-                requireNumeric(type, expr.op)
-                expr.type = type
+                val operand = expr.operand
+                if (operand is IntLit) {
+                    val type = literalType(operand.value, expected)
+                    operand.type = type
+                    expr.type = type
+                } else {
+                    val type = checkExpr(operand, null)
+                    requireNumeric(type, expr.op)
+                    expr.type = type
+                }
             }
 
             "!" -> {
@@ -749,11 +766,11 @@ class TypeChecker {
         val leftType: WolinType
         val rightType: WolinType
         when {
-            left is IntLit && right !is IntLit && right !is RealLit -> {
+            isContextualIntLiteral(left) && !isContextualIntLiteral(right) && right !is RealLit -> {
                 rightType = checkExpr(right, null)
                 leftType = checkExpr(left, rightType)
             }
-            right is IntLit && left !is IntLit && left !is RealLit -> {
+            isContextualIntLiteral(right) && !isContextualIntLiteral(left) && left !is RealLit -> {
                 leftType = checkExpr(left, null)
                 rightType = checkExpr(right, leftType)
             }

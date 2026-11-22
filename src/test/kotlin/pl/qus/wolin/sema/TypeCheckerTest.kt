@@ -242,4 +242,38 @@ class TypeCheckerTest {
         }
         assertEquals("initialiser references a global that is not yet initialised", e.message)
     }
+
+    @Test fun `a negated literal takes the other operand's type`() {
+        val program = typeChecker("fun f() { var w: word = 1; var r = w == -1 }")
+        val cmp = program.functions[0].body.filterIsInstance<Ast.LocalDecl>().last().init as Ast.BinaryOp
+        val neg = cmp.right as Ast.UnaryOp
+        assertEquals(Types.word, neg.type)
+        assertEquals(Types.word, neg.operand.type)
+    }
+
+    @Test fun `a sign-prefixed literal on the left takes the right operand's type`() {
+        val program = typeChecker("fun f() { var w: word = 1; var r = -1 == w }")
+        val cmp = program.functions[0].body.filterIsInstance<Ast.LocalDecl>().last().init as Ast.BinaryOp
+        assertEquals(Types.word, (cmp.left as Ast.UnaryOp).type)
+    }
+
+    @Test fun `a plus-prefixed literal takes the other operand's type`() {
+        typeChecker("fun f() { var w: word = 1; var r = w == +1 }")
+    }
+
+    @Test fun `a sign-prefixed literal in a when condition takes the subject's type`() {
+        typeChecker("fun f(): bool { var w: word = 1; return when (w) { -1 -> true else -> false } }")
+    }
+
+    @Test fun `a negated literal does not make an unsigned operand legal`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var u: uword = 1; var r = u == -1 }")
+        }
+    }
+
+    @Test fun `a negated literal does not retype a variable operand`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var w: word = 1; var b: byte = 1; var r = w == b }")
+        }
+    }
 }

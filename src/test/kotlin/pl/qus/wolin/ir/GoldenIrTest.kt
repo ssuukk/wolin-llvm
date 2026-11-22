@@ -361,4 +361,15 @@ class GoldenIrTest {
         assertTrue(Regex("^p:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the trailing label's block is missing:\n$ir")
         assertTargetsDefined(ir)
     }
+
+    @Test fun `a negated word literal emits a word subtraction`() {
+        val src = """
+            fun f(): bool {
+                var w: word = 1
+                return w == -1
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("sub i16 0, 1"), ir)
+    }
 }

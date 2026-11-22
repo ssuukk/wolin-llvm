@@ -31,4 +31,19 @@ class ComparisonTest {
         """)
         assertEquals(0, bytes[0].toInt() and 0xFF)
     }
+
+    @Test fun `a negated literal in a word comparison is a word`() {
+        val bytes = runProgram("""
+            fun main() {
+                var w: word = 0
+                w = w + -1
+                var eq: bool = w == -1
+                var neg: bool = w < 0
+                var out: ubyte^0x400 = 0
+                out = if (eq && neg) 1 else 0
+                while (true) {}
+            }
+        """)
+        assertEquals(1, bytes[0].toInt() and 0xFF)
+    }
 }

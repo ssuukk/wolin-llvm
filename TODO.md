@@ -101,11 +101,12 @@ Moved from the "Known gaps" section below; now v2 work items:
       `when` *expression* with no matching branch and no `else` falls through
       with an undefined phi (`StmtEmitter.whenFlow`); the spec §6 wanted a
       compile error at the use site.
-- [ ] **A negated literal does not take the other operand's type.** A
+- [x] **A negated literal does not take the other operand's type.** A
       positive literal does (`w + 1` types the `1` as `word`), but `-1` is a
       `UnaryOp` typed by the smallest type holding it (`byte`), so
       `word == -1` is a type error while `word == 1` compiles. Found while
-      landing the conversions.
+      landing the conversions. Fixed: a single-sign literal operand now takes
+      the other operand's type (`isContextualIntLiteral`).
 - [ ] **A bitmask literal has to fit the signed range of its operand.**
       `word & 0xFF00` is rejected ("Value out of range") because the literal
       is typed with `fits` (the signed range) rather than `fitsWidth` (the
