@@ -15,26 +15,32 @@ var maskInterrupts: bool^CPU.I
 // sprite0Shape below is initialised.
 var sprite0Pointer: ubyte^2040
 
-// A 1-color smiley (sprite 0), 16 rows x 3 bytes (B0 B1 B2) at $3000. Element
-// i -> index i; the rest of the 256-byte array stays zero. B2 = 0 on every row
-// keeps it in 1-color mode (spriteColor0 tints it).
+// A 1-color hot air balloon (sprite 0), 21 rows x 3 bytes (B0 B1 B2) at
+// $3000. Element i -> index i; the rest of the 256-byte array stays zero.
+// B2 = 0 on every row keeps it in 1-color mode (spriteColor0 tints it).
+// Columns 1-24 map to bits 128..1 across B0, B1 and B2.
 var sprite0Shape: ubyte[ubyte]^0x3000 = [
-    0b00000000, 0b00000000, 0b00000000,
-    0b00001111, 0b11110000, 0b00000000,
-    0b00111111, 0b11111100, 0b00000000,
-    0b01111111, 0b11111110, 0b00000000,
-    0b01111111, 0b11111110, 0b00000000,
-    0b01110011, 0b11001110, 0b00000000,
-    0b01110011, 0b11001110, 0b00000000,
-    0b01111111, 0b11111110, 0b00000000,
-    0b01111111, 0b11111110, 0b00000000,
-    0b01111000, 0b00011110, 0b00000000,
-    0b01110000, 0b00001110, 0b00000000,
-    0b01100000, 0b00000110, 0b00000000,
-    0b00110000, 0b00001100, 0b00000000,
-    0b00111111, 0b11111100, 0b00000000,
-    0b00001111, 0b11110000, 0b00000000,
-    0b00000000, 0b00000000, 0b00000000
+    0b00000000, 0b11111110, 0b00000000,
+    0b00000011, 0b11111111, 0b10000000,
+    0b00000111, 0b11111111, 0b11000000,
+    0b00000111, 0b11001111, 0b11000000,
+    0b00001111, 0b10110011, 0b11100000,
+    0b00001111, 0b10111111, 0b11100000,
+    0b00001111, 0b10110011, 0b11100000,
+    0b00000111, 0b11001111, 0b11000000,
+    0b00000111, 0b11111111, 0b11000000,
+    0b00000111, 0b11111111, 0b11000000,
+    0b00000101, 0b11111111, 0b01000000,
+    0b00000010, 0b11111110, 0b10000000,
+    0b00000010, 0b01111100, 0b10000000,
+    0b00000001, 0b00111001, 0b00000000,
+    0b00000001, 0b00111001, 0b00000000,
+    0b00000000, 0b10010010, 0b00000000,
+    0b00000000, 0b10010010, 0b00000000,
+    0b00000000, 0b01111100, 0b00000000,
+    0b00000000, 0b01111100, 0b00000000,
+    0b00000000, 0b01111100, 0b00000000,
+    0b00000000, 0b00111000, 0b00000000
 ]
 
 fun onRasterGoto(line: ubyte, proc: uword) {
@@ -93,7 +99,7 @@ fun openBorder() {
     spriteYExpansion := 1
     sprite0X = 100
     sprite0Y = 30
-    spriteColor0 = 2
+    spriteColor0 = 0 // black, like the source balloon
     sprite0Pointer = 192 // block 0xC0 -> sprite 0 shape at $3000
     backgroundColor0 = 7
     borderColor = 6
