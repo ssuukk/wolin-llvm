@@ -18,7 +18,7 @@ import kotlin.system.exitProcess
 private const val USAGE = """
 wolinc [options] <file.wtk>...
   -o, --output <file>     output .prg (default: first input's name)
-  -d, --debug             keep intermediate .ll files (no link map in v1)
+  -d, --debug             keep intermediate .ll files
   -e, --emit-ir           write .ll and stop
   -S, --sdk <dir>         llvm-mos SDK path (overrides discovery)
       --target <name>     c64 (default)

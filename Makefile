@@ -30,4 +30,4 @@ $(PROGRAMS): examples/%.prg: examples/%.wtk $(STDLIB) $(COMPILER_SRC)
 	java -cp "$$($(GRADLE) -q printClasspath)" $(MAIN) $(STDLIB) $< -o $@
 
 clean:
-	rm -f examples/*.prg
+	rm -f examples/*.prg examples/*.prg.map

@@ -59,12 +59,15 @@ emits a direct load or store — no address is loaded first.
 ```
 wolinc [options] <file.wtk>...
   -o, --output <file>     output .prg (default: first input's name)
-  -d, --debug             keep intermediate .ll files (no link map in v1)
+  -d, --debug             keep intermediate .ll files
   -e, --emit-ir           write .ll and stop
   -S, --sdk <dir>         llvm-mos SDK path (overrides discovery)
       --target <name>     c64 (default)
       --keep-ir           keep the .ll next to the .prg
 ```
+
+Every link writes `<output>.map` next to the `.prg`: symbol addresses, sizes,
+and the section layout, as produced by the SDK linker.
 
 Several input files compile into one program: each file becomes its own LLVM
 module, and the driver module calls them. The files are checked together, so

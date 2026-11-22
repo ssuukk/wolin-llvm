@@ -34,11 +34,17 @@ class Linker(private val sdk: Sdk) {
     }
 
     /**
-     * Links the modules into the output `.prg`. The SDK's default
-     * configuration enables `-flto`, which is what we want.
+     * Links the modules into the output `.prg`, writing the linker's map to
+     * `<output>.map` beside it. The SDK's default configuration enables
+     * `-flto`, which is what we want.
      */
     fun link(llFiles: List<Path>, output: Path, workDir: Path) {
-        run(listOf("-O2") + llFiles.map { it.toString() } + listOf("-o", output.toString()), workDir)
+        val map = output.resolveSibling(output.fileName.toString() + ".map")
+        run(
+            listOf("-O2") + llFiles.map { it.toString() } +
+                listOf("-o", output.toString(), "-Wl,-Map=$map"),
+            workDir,
+        )
     }
 
     private fun run(args: List<String>, workDir: Path?) {

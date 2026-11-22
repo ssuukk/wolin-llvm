@@ -3,6 +3,7 @@ package pl.qus.wolin.it
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,6 +53,34 @@ class CliTest {
         val rc = runCli(emptyList())
         assertNotEquals(0, rc)
         assertTrue(errOutput.contains("no input files"), errOutput)
+    }
+
+    @Test fun `compiling writes a link map next to the prg`() {
+        val dir = tempDir()
+        val src = dir.resolve("t.wtk")
+        src.writeText("fun main() { var out: ubyte^0x400 = 9; out = 9; while (true) {} }")
+        val prg = dir.resolve("t.prg")
+        val rc = runCli(listOf("-o", prg.toString(), src.toString()))
+        assertEquals(0, rc, errOutput)
+        val map = dir.resolve("t.prg.map")
+        assertTrue(map.exists(), "the link map must be written next to the .prg")
+        val text = map.readText()
+        assertTrue(text.contains(".text"), text)
+        assertTrue(
+            Regex("(?m)^\\s*[0-9a-f]+\\s+[0-9a-f]+\\s+[0-9a-f]+\\s+1\\s+main\\s*$").containsMatchIn(text),
+            "the map must give main an address and size:\n$text",
+        )
+    }
+
+    @Test fun `the link map path supports directories with spaces`() {
+        val dir = tempDir().resolve("with space")
+        Files.createDirectories(dir)
+        val src = dir.resolve("t.wtk")
+        src.writeText("fun main() { while (true) {} }")
+        val prg = dir.resolve("t.prg")
+        val rc = runCli(listOf("-o", prg.toString(), src.toString()))
+        assertEquals(0, rc, errOutput)
+        assertTrue(dir.resolve("t.prg.map").exists(), "the map must be written into the spaced directory")
     }
 
     /** A temporary directory for the test's files. */

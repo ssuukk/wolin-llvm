@@ -83,7 +83,8 @@ No plan yet. Each was deferred from v1 for the stated reason.
       fixed-address or global, with no bounds checks.
 - [ ] **String interpolation** (`${...}`) — backslash escapes are supported;
       templates are rejected.
-- [ ] **Link map** in the output — the CLI note "(no link map in v1)".
+- [x] **Link map** in the output — the CLI note "(no link map in v1)". Fixed:
+      every link writes `<output>.map` next to the `.prg`.
 
 ### Known gaps moved to v2 (code audit 2026-11-15)
 
