@@ -106,7 +106,8 @@ return@name                   // the label form of the tail-jump idiom
 
 - `if` and `when` also work as **expressions**: the value is the last
   expression of the taken branch, or `unit` when the branch does not end in
-  an expression.
+  an expression. A `when` expression must have an `else` branch; without one
+  it may not match and is rejected.
 
 ```kotlin
 var sign: byte = if (n < 0) -1 else 1
@@ -558,6 +559,7 @@ Errors are `SemaException`s with a message that names the problem:
 | `Cannot assign to val X` | assignment to a `val` |
 | `The else branch of a when must be last` | `else` not in the final position |
 | `when condition type X does not match subject type Y` | subject-form `when` with a mismatched condition |
+| `this when expression may not match any branch` | a `when` expression with no `else` |
 | `Array literal needs an array type` | `var x = [1, 2]` with no declared array type |
 | `Array literal can only initialise a declaration` | an array literal in assignment or expression position |
 | `Too many array elements` (with the count and the domain) | a list longer than the index type's domain |

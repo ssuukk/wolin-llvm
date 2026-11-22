@@ -539,6 +539,9 @@ class TypeChecker {
         val branchTypes = checkWhenEntries(expr.subject, expr.entries) { entry ->
             checkBranch(entry.body, expected)
         }
+        if (expr.entries.none { it.isElse }) {
+            throw SemaException("this when expression may not match any branch")
+        }
         expr.type = if (branchTypes.all { it.kind == branchTypes.firstOrNull()?.kind }) {
             branchTypes.firstOrNull() ?: Types.unit
         } else {

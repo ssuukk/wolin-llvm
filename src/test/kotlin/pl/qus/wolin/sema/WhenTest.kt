@@ -5,6 +5,7 @@ import org.junit.jupiter.api.assertThrows
 import pl.qus.wolin.ast.Ast
 import pl.qus.wolin.driver.Diagnostics
 import pl.qus.wolin.parser.ParserFacade
+import kotlin.test.assertEquals
 
 /** The `when` type rules from the Task 4 design decisions (D2). */
 class WhenTest {
@@ -57,5 +58,34 @@ class WhenTest {
         assertThrows<SemaException> {
             typeChecker("fun f(x: ubyte) { var r: ubyte = when (x) { 1 -> 10 else -> true } }")
         }
+    }
+
+    @Test fun `a when expression without else is rejected in value positions`() {
+        val expected = "this when expression may not match any branch"
+        val e = assertThrows<SemaException> {
+            typeChecker("fun f(x: ubyte): ubyte { return when (x) { 1 -> 10 } }")
+        }
+        assertEquals(expected, e.message)
+        assertThrows<SemaException> {
+            typeChecker("fun f(x: ubyte) { var r = when (x) { 1 -> 10 } }")
+        }
+        assertThrows<SemaException> {
+            typeChecker("fun f(x: ubyte) { var r: ubyte = 0; r = when (x) { 1 -> 10 } }")
+        }
+    }
+
+    @Test fun `a when statement without else is still allowed`() {
+        typeChecker("fun f(x: ubyte) { when (x) { 1 -> { } } }")
+    }
+
+    @Test fun `an empty when expression is rejected`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f(x: ubyte) { var r = when (x) { } }")
+        }
+    }
+
+    @Test fun `a when expression with else still works`() {
+        typeChecker("fun f(x: ubyte): ubyte { return when (x) { 1 -> 10 else -> 20 } }")
+        typeChecker("fun f(x: ubyte): ubyte { return when (x) { else -> 20 } }")
     }
 }

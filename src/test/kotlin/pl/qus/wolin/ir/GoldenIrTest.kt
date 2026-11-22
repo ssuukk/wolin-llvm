@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import pl.qus.wolin.driver.CompilerPipeline
+import pl.qus.wolin.sema.SemaException
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -371,5 +372,17 @@ class GoldenIrTest {
         """.trimIndent()
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
         assertTrue(ir.contains("sub i16 0, 1"), ir)
+    }
+
+    @Test fun `the checker rejects a when expression without else before IR emission`() {
+        val src = """
+            fun f(x: ubyte): ubyte {
+                return when (x) { 1 -> 10 }
+            }
+        """.trimIndent()
+        val e = assertFailsWith<SemaException> {
+            CompilerPipeline().compileToIr(src, "t.wtk")
+        }
+        assertEquals("this when expression may not match any branch", e.message)
     }
 }

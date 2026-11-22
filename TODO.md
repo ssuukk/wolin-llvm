@@ -97,10 +97,11 @@ Moved from the "Known gaps" section below; now v2 work items:
 - [ ] **Property modifiers are silently accepted too.** `const val`,
       `lateinit var`, `open val` and friends parse and are ignored
       (`buildGlobal`/`buildLocal` read no modifiers).
-- [ ] **`when` expression without a match has no defined value.** A
+- [x] **`when` expression without a match has no defined value.** A
       `when` *expression* with no matching branch and no `else` falls through
       with an undefined phi (`StmtEmitter.whenFlow`); the spec §6 wanted a
-      compile error at the use site.
+      compile error at the use site. Fixed: `checkWhenExpr` requires an
+      `else` branch; statement-form `when` still falls through.
 - [x] **A negated literal does not take the other operand's type.** A
       positive literal does (`w + 1` types the `1` as `word`), but `-1` is a
       `UnaryOp` typed by the smallest type holding it (`byte`), so
