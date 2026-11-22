@@ -21,6 +21,7 @@ import pl.qus.wolin.ast.FunDecl
 import pl.qus.wolin.ast.GlobalDecl
 import pl.qus.wolin.ast.IfExpr
 import pl.qus.wolin.ast.IfStmt
+import pl.qus.wolin.ast.LabelStmt
 import pl.qus.wolin.ast.LocalDecl
 import pl.qus.wolin.ast.ReturnAtAddress
 import pl.qus.wolin.ast.ReturnAtLabel
@@ -54,6 +55,9 @@ class StmtEmitter(private val b: IrBuilder) {
     /** (condition-block, end-block) labels of the enclosing loops, innermost last. */
     private val loops = ArrayDeque<Pair<String, String>>()
 
+    /** label name -> reserved block label, filled by [startFunction]. */
+    private val labelBlocks = mutableMapOf<String, String>()
+
     /** Mirrors the builder's used labels so labels can be reserved ahead of time. */
     private val usedLabels = mutableSetOf("entry")
     private var nextLabel = 1
@@ -84,6 +88,7 @@ class StmtEmitter(private val b: IrBuilder) {
         terminated = false
         loops.clear()
         localSlots.clear()
+        labelBlocks.clear()
 
         // A global of another file lives under that file's prefix, so the
         // reference names the file that declares it. These are declared
@@ -112,6 +117,10 @@ class StmtEmitter(private val b: IrBuilder) {
         collectLocalDecls(fn.body, decls)
         decls.filter { it.location !is FixedAddress && it.location !is FixedArray && it.location !is CpuRegister }
              .forEach { localSlots[it] = b.alloca(TypeMapper.ir(it.type)) }
+
+        // One block per label, in source order, reserved before the body
+        // emits so a forward jump can name its target.
+        collectLabelNames(fn.body).forEach { name -> labelBlocks[name] = reserveLabel(name) }
 
         if (returnsLastExpression) {
             // A function literal's value is its last expression: the
@@ -143,6 +152,14 @@ class StmtEmitter(private val b: IrBuilder) {
 
     /** Emits one statement into the current block. */
     fun emit(s: Stmt) {
+        // A label opens its block even where the block is already terminated:
+        // a label after a `return` is dead code, but its block still exists.
+        if (s is LabelStmt) {
+            val target = labelBlocks[s.name]!!
+            ensureTerminatedOr(target)
+            openReserved(target)
+            return
+        }
         // A block that already carries its terminator cannot take more code:
         // statements after a `return@` or a `break` are dead. They still parse
         // and type-check; they are just not emitted.
@@ -173,15 +190,28 @@ class StmtEmitter(private val b: IrBuilder) {
                         ReturnAtEmitter(b).emit(target.address)
                         terminated = true
                     }
-                    is ReturnAtLabel -> throw error("labelled return not emitted yet")
+                    is ReturnAtLabel -> {
+                        b.branch(labelBlocks[target.name]!!)
+                        terminated = true
+                    }
                 }
             }
             is BreakStmt -> {
+                s.label?.let { name ->
+                    b.branch(labelBlocks[name]!!)
+                    terminated = true
+                    return
+                }
                 val target = loops.lastOrNull() ?: throw error("break outside a loop")
                 b.branch(target.second)
                 terminated = true
             }
             is ContinueStmt -> {
+                s.label?.let { name ->
+                    b.branch(labelBlocks[name]!!)
+                    terminated = true
+                    return
+                }
                 val target = loops.lastOrNull() ?: throw error("continue outside a loop")
                 b.branch(target.first)
                 terminated = true
@@ -327,8 +357,9 @@ class StmtEmitter(private val b: IrBuilder) {
             unconditionalBranch(elseL)
             openReserved(elseL)
             val v = emitBody(elseEntry, endL)
+            val block = b.block()
             openReserved(endL)
-            return if (v != null) listOf(v to elseL) else null
+            return if (v != null) listOf(v to block) else null
         }
 
         val endL = reserveLabel("when.end")
@@ -351,11 +382,13 @@ class StmtEmitter(private val b: IrBuilder) {
         val values = mutableListOf<Pair<IrValue, String>>()
         for ((i, entry) in nonElse.withIndex()) {
             openReserved(bodyLabels[i])
-            emitBody(entry, endL)?.let { values += it to bodyLabels[i] }
+            // A branch can leave through a labelled jump, so the phi must
+            // name the block that actually produced the value.
+            emitBody(entry, endL)?.let { values += it to b.block() }
         }
         if (elseL != null) {
             openReserved(elseL)
-            emitBody(elseEntry!!, endL)?.let { values += it to elseL }
+            emitBody(elseEntry!!, endL)?.let { values += it to b.block() }
         }
         openReserved(endL)
         return values.ifEmpty { null }
@@ -508,6 +541,45 @@ class StmtEmitter(private val b: IrBuilder) {
                 collectLocalDeclsInExpr(e.index, out)
             }
             is Convert -> collectLocalDeclsInExpr(e.value, out)
+            else -> Unit
+        }
+    }
+
+    // ---- label pre-scan ------------------------------------------------------
+
+    /** Collects every label name in source order, so its block can be reserved up front. */
+    private fun collectLabelNames(stmts: List<Stmt>): List<String> {
+        val out = LinkedHashSet<String>()
+        collectLabelNamesIn(stmts, out)
+        return out.toList()
+    }
+
+    private fun collectLabelNamesIn(stmts: List<Stmt>, out: MutableSet<String>) {
+        for (s in stmts) {
+            when (s) {
+                is LabelStmt -> out += s.name
+                is BlockStmt -> collectLabelNamesIn(s.body, out)
+                is IfStmt -> {
+                    collectLabelNamesIn(s.then, out)
+                    collectLabelNamesIn(s.otherwise, out)
+                }
+                is WhileStmt -> collectLabelNamesIn(s.body, out)
+                is WhenStmt -> s.entries.forEach { collectLabelNamesIn(it.body, out) }
+                is ExprStmt -> collectLabelNamesInExpr(s.expr, out)
+                is ReturnStmt -> s.value?.let { collectLabelNamesInExpr(it, out) }
+                else -> Unit
+            }
+        }
+    }
+
+    /** Only an `if` or `when` in expression position can nest statements. */
+    private fun collectLabelNamesInExpr(e: Expr, out: MutableSet<String>) {
+        when (e) {
+            is IfExpr -> {
+                collectLabelNamesIn(e.then, out)
+                collectLabelNamesIn(e.otherwise, out)
+            }
+            is WhenExpr -> e.entries.forEach { collectLabelNamesIn(it.body, out) }
             else -> Unit
         }
     }

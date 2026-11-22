@@ -296,6 +296,7 @@ statements
 
 statement
     : declaration
+    | labelDefinition blockLevelExpression
     | blockLevelExpression
     | labelDefinition
     ;
@@ -305,8 +306,7 @@ blockLevelExpression
     ;
 
 declaration
-    : labelDefinition*
-    ( classDeclaration
+    : ( classDeclaration
     | functionDeclaration
     | propertyDeclaration
     | typeAlias)

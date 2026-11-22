@@ -5,6 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import pl.qus.wolin.driver.CompilerPipeline
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -148,5 +149,191 @@ class GoldenIrTest {
         """.trimIndent()
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
         assertTrue(ir.contains("sext i8"), "the conversion must sign-extend:\n$ir")
+    }
+
+    // ---- labels -------------------------------------------------------------
+
+    /** Every `br`/`condbr` target must name a block that actually exists. */
+    private fun assertTargetsDefined(ir: String) {
+        val defined = Regex("^(\\s*)([\\w.]+):\\s*$", RegexOption.MULTILINE)
+            .findAll(ir).map { it.groupValues[2] }.toSet()
+        val targets = Regex("label %([\\w.]+)").findAll(ir).map { it.groupValues[1] }.toSet()
+        val missing = targets - defined
+        assertTrue(missing.isEmpty(), "branches to undefined blocks: $missing\n$ir")
+    }
+
+    /** The label of the block that contains the first occurrence of [instr]. */
+    private fun blockContaining(ir: String, instr: String): String {
+        val idx = ir.indexOf(instr)
+        require(idx >= 0) { "instruction not found: $instr\n$ir" }
+        return Regex("^([\\w.]+):\\s*$", RegexOption.MULTILINE)
+            .findAll(ir.substring(0, idx))
+            .last()
+            .groupValues[1]
+    }
+
+    @Test fun `a label emits a block that a forward jump targets`() {
+        val src = """
+            fun f() {
+                while (true) {
+                    if (true) break@out
+                }
+                out@
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^out:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the label's block is missing:\n$ir")
+        assertTrue(ir.contains("br label %out"), "the break must target the label's block:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `consecutive labels fall through to each other`() {
+        val src = """
+            fun f() {
+                a@
+                b@
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^a:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the first label's block is missing:\n$ir")
+        assertTrue(Regex("^b:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the second label's block is missing:\n$ir")
+        assertTrue(ir.contains("br label %b"), "the first label must fall through to the second:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `a label after a return still opens its block`() {
+        val src = """
+            fun f(): ubyte {
+                if (true) break@x
+                return 5
+                x@
+                return 6
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^x:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the dead label's block is missing:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `an interrupt handler with a labelled return keeps its attribute`() {
+        val labelled = """
+            interrupt fun h() {
+                if (true) return@skip
+                skip@
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(labelled, "t.wtk")
+        assertTrue(
+            ir.contains("attributes #0 = { \"interrupt\" }"),
+            "a labelled return is in-function: the handler keeps its attribute:\n$ir",
+        )
+
+        val address = """
+            interrupt fun h2() {
+                return@0xea31
+            }
+        """.trimIndent()
+        val ir2 = CompilerPipeline().compileToIr(address, "t.wtk")
+        assertFalse(ir2.contains("attributes #0"), "an address-form return drops the attribute (today's rule):\n$ir2")
+    }
+
+    @Test fun `a label named like an internal block resolves`() {
+        val src = """
+            fun f() {
+                loop@
+                while (true) {
+                    break@loop
+                }
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^loop:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the label's block is missing:\n$ir")
+        assertTrue(ir.contains("br label %loop"), "break@loop must target the label's block:\n$ir")
+        val cond = blockContaining(ir, "br i1")
+        assertTrue(cond != "loop", "the loop's condition block must keep a different label:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `an unlabelled continue ignores a label at the top of the body`() {
+        val src = """
+            fun f() {
+                while (true) {
+                    top@
+                    if (true) continue
+                }
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        val cond = blockContaining(ir, "br i1")
+        assertTrue(cond != "top", "the label must not bind the loop:\n$ir")
+        val thenLine = Regex("if\\.then:\\n(\\s+.*?)\\n").find(ir)!!.groupValues[1].trim()
+        assertTrue(
+            thenLine == "br label %$cond",
+            "the unlabelled continue must target the condition block, got: $thenLine\n$ir",
+        )
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `a trailing label on a non-void function is the existing return error`() {
+        val src = """
+            fun f(): ubyte {
+                x@
+            }
+        """.trimIndent()
+        val e = assertFailsWith<IllegalStateException> { CompilerPipeline().compileToIr(src, "t.wtk") }
+        assertTrue(e.message.orEmpty().contains("must return a value"), "the expected error is missing, got: ${e.message}")
+    }
+
+    // ---- phi predecessors -----------------------------------------------------
+
+    @Test fun `a branch value produced after a loop keeps its phi predecessor`() {
+        val src = """
+            fun f(): ubyte {
+                return if (true) { while (false) {}; 5 } else { 3 }
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("[ 5, %end ]"), "the phi must name the loop's end block:\n$ir")
+        assertFalse(ir.contains("[ 5, %if.then ]"), "the phi names a block that is not a predecessor:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `a label in an if expression branch carries the value`() {
+        val src = """
+            fun f(): ubyte {
+                return if (true) { p@; 5 } else { 3 }
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^p:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the label's block is missing:\n$ir")
+        assertTrue(ir.contains("[ 5, %p ]"), "the phi must name the label's block:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `a label in a when expression branch carries the value`() {
+        val src = """
+            fun f(): ubyte {
+                return when {
+                    else -> { q@; 7 }
+                }
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^q:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the label's block is missing:\n$ir")
+        assertTrue(ir.contains("[ 7, %q ]"), "the phi must name the label's block:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `a branch leaving through a labelled jump has no value`() {
+        val src = """
+            fun f() {
+                var u: unit = if (true) { break@p } else { }
+                p@
+                while (true) {}
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertFalse(ir.contains("phi"), "the jumping branch must not contribute a phi incoming:\n$ir")
+        assertTargetsDefined(ir)
     }
 }

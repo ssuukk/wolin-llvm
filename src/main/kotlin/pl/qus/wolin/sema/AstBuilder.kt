@@ -135,18 +135,41 @@ class AstBuilder {
 
     private fun buildStatements(ctx: KotlinParser.StatementsContext?): List<Stmt> {
         if (ctx == null) return emptyList()
-        return ctx.statement().map { buildStatement(it) }
+        return ctx.statement().flatMap { buildStatementList(it) }
     }
 
-    private fun buildStatement(ctx: KotlinParser.StatementContext): Stmt {
+    /**
+     * A statement may split into two: `name@ expr` in statement position is a
+     * label statement followed by the expression statement. The only exception
+     * is the maximal-munch `return@<address>` pair, which stays one tail-jump
+     * statement.
+     */
+    private fun buildStatementList(ctx: KotlinParser.StatementContext): List<Stmt> {
         ctx.declaration()?.let { declaration ->
-            declaration.propertyDeclaration()?.let { return buildLocal(it) }
+            declaration.propertyDeclaration()?.let { return listOf(buildLocal(it)) }
             declaration.functionDeclaration()?.let { unsupported("nested function") }
             declaration.classDeclaration()?.let { unsupported("class declaration") }
             declaration.typeAlias()?.let { unsupported("type alias") }
         }
-        ctx.labelDefinition()?.let { return LabelStmt(it.LabelDefinition().text.removeSuffix("@")) }
+        val label = ctx.labelDefinition()?.LabelDefinition()?.text
+        if (label != null) {
+            val expression = ctx.blockLevelExpression()?.expression()
+            if (expression != null) {
+                if (label == "return@") {
+                    val address = (buildExpression(expression) as? IntLit)?.value
+                        ?: unsupported("return@<label>")
+                    returnAtSink?.add(ReturnAt(address.toInt()))
+                    return listOf(ReturnAtStmt(ReturnAtAddress(address.toInt())))
+                }
+                return listOf(LabelStmt(label.removeSuffix("@")), buildStatementExpr(expression))
+            }
+            return listOf(LabelStmt(label.removeSuffix("@")))
+        }
         val expression = ctx.blockLevelExpression()?.expression() ?: unsupported("statement")
+        return listOf(buildStatementExpr(expression))
+    }
+
+    private fun buildStatementExpr(expression: KotlinParser.ExpressionContext): Stmt {
         bareWhen(expression)?.let { return buildWhen(it) }
         return try {
             expressionToStatement(buildExpression(expression))

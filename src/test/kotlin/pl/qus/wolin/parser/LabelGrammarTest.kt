@@ -64,4 +64,17 @@ class LabelGrammarTest {
             program.functions[0].body,
         )
     }
+    @Test fun `a label on its own line before a loop is a label statement`() {
+        val program = build("fun f() { retry@\n    while (true) { break@retry } }")
+        val body = program.functions[0].body
+        assertEquals(Ast.LabelStmt("retry"), body[0])
+        assertTrue(body[1] is Ast.WhileStmt, "the loop must follow the label, got: ${body[1]}")
+    }
+
+    @Test fun `a label on its own line before a return is a label statement`() {
+        val program = build("fun f(c: ubyte): ubyte { hold@\n    return c }")
+        val body = program.functions[0].body
+        assertEquals(Ast.LabelStmt("hold"), body[0])
+        assertTrue(body[1] is Ast.ReturnStmt, "the return must follow the label, got: ${body[1]}")
+    }
 }

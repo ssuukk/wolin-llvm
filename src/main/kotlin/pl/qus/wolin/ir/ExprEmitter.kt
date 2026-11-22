@@ -533,10 +533,15 @@ class ExprEmitter(
         stmt.conditionalBranch(c, thenL, elseL ?: endL)
         stmt.openReserved(thenL)
         val v1 = stmt.emitValue(e.then)
+        // The value is produced in the current block: the branch may have
+        // left `if.then` through a jump (a loop, a label), so the phi must
+        // name the block that actually produced the value.
+        val thenBlock = if (v1 != null) b.block() else ""
         stmt.ensureTerminatedOr(endL)
         if (elseL != null) {
             stmt.openReserved(elseL)
             val v2 = stmt.emitValue(e.otherwise)
+        val elseBlock = if (v2 != null) b.block() else ""
             stmt.ensureTerminatedOr(endL)
             stmt.openReserved(endL)
             // A null side means that branch leaves through a terminator (a
@@ -546,7 +551,7 @@ class ExprEmitter(
                 e.type.kind == TypeKind.UNIT -> IrValue("", IrType.Void)
                 v1 == null -> v2 ?: IrValue("", IrType.Void)
                 v2 == null -> v1
-                else -> b.phi(TypeMapper.ir(e.type), listOf(v1 to thenL, v2 to elseL))
+                else -> b.phi(TypeMapper.ir(e.type), listOf(v1 to thenBlock, v2 to elseBlock))
             }
         }
         stmt.openReserved(endL)
