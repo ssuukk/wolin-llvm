@@ -1,6 +1,8 @@
 package pl.qus.wolin.ir
 
+import java.util.IdentityHashMap
 import kotlin.math.abs
+import pl.qus.wolin.ast.Ast
 import pl.qus.wolin.ast.ArrayAccess
 import pl.qus.wolin.ast.ArrayLiteral
 import pl.qus.wolin.ast.Assign
@@ -17,6 +19,7 @@ import pl.qus.wolin.ast.IntLit
 import pl.qus.wolin.ast.NullLit
 import pl.qus.wolin.ast.RealLit
 import pl.qus.wolin.ast.StringLit
+import pl.qus.wolin.ast.StringTemplate
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
 import pl.qus.wolin.ast.WhenEntry
@@ -105,6 +108,12 @@ class ExprEmitter(
 ) {
     private val floatConsts = LinkedHashMap<String, String>()
     private val stringConsts = LinkedHashMap<String, String>()
+    private val interpBuffers = IdentityHashMap<StringTemplate, String>()
+    private var nextInterp = 0
+    internal val helperDeclarations = LinkedHashSet<String>()
+    internal val usedInterpHelpers = LinkedHashSet<String>()
+    var usesFloatInterpolation = false
+        private set
     /** The function literals of this module, emitted after the functions. */
     internal val lambda = LambdaEmitter(b, stmt, prefix)
 
@@ -115,6 +124,7 @@ class ExprEmitter(
         is NullLit -> IrValue("null", IrType.Ptr)
         is RealLit -> emitRealLit(e)
         is StringLit -> emitStringLit(e)
+        is StringTemplate -> emitStringTemplate(e)
         is VarRef -> emitVarRef(e)
         is UnaryOp -> emitUnary(e)
         is BinaryOp -> emitBinary(e)
@@ -158,13 +168,16 @@ class ExprEmitter(
         return b.instr(IrType.Float, "load float, ptr $name")
     }
 
-    private fun emitStringLit(e: StringLit): IrValue {
-        val n = e.bytes.size
-        val key = e.bytes.contentToString()
+    private fun emitStringLit(e: StringLit): IrValue = stringPtr(e.bytes)
+
+    /** The pointer to a module-level NUL-terminated constant for [bytes]. */
+    private fun stringPtr(bytes: ByteArray): IrValue {
+        val n = bytes.size
+        val key = bytes.contentToString()
         val name = stringConsts[key] ?: run {
             val global = "@str_${stringConsts.size}"
             stringConsts[key] = global
-            val chars = e.bytes.joinToString("") { llvmEscapeByte(it.toInt() and 0xFF) }
+            val chars = bytes.joinToString("") { llvmEscapeByte(it.toInt() and 0xFF) }
             constants += "$global = private unnamed_addr constant [${n + 1} x i8] c\"$chars\\00\""
             global
         }
@@ -172,6 +185,102 @@ class ExprEmitter(
             IrType.Ptr,
             "getelementptr inbounds [${n + 1} x i8], ptr $name, i32 0, i32 0"
         )
+    }
+
+    // ---- string interpolation ---------------------------------------------
+
+    /**
+     * A template writes literal runs and rendered values into its own static
+     * 256-byte buffer and returns that buffer. The buffer is never freed: a
+     * later evaluation of the same site overwrites it.
+     */
+    private fun emitStringTemplate(e: StringTemplate): IrValue {
+        val buf = interpolationBuffer(e)
+        var pos = IrValue("0", IrType.I16)
+
+        for (part in e.parts) when (part) {
+            is Ast.StringTemplate.Literal -> {
+                if (part.bytes.isEmpty()) continue
+                pos = appendInterp(
+                    "__wolin_interp_append_string",
+                    "declare i16 @__wolin_interp_append_string(ptr, i16, ptr)",
+                    listOf(buf, pos, stringPtr(part.bytes)),
+                )
+            }
+            is Ast.StringTemplate.Value -> {
+                val value = emit(part.expr)
+                when (part.expr.type.kind) {
+                    TypeKind.UBYTE -> pos = appendInterp(
+                        "__wolin_interp_append_ubyte",
+                        "declare i16 @__wolin_interp_append_ubyte(ptr, i16, i8)",
+                        listOf(buf, pos, value),
+                    )
+                    TypeKind.BYTE -> pos = appendInterp(
+                        "__wolin_interp_append_byte",
+                        "declare i16 @__wolin_interp_append_byte(ptr, i16, i8)",
+                        listOf(buf, pos, value),
+                    )
+                    TypeKind.UWORD -> pos = appendInterp(
+                        "__wolin_interp_append_uword",
+                        "declare i16 @__wolin_interp_append_uword(ptr, i16, i16)",
+                        listOf(buf, pos, value),
+                    )
+                    TypeKind.WORD -> pos = appendInterp(
+                        "__wolin_interp_append_word",
+                        "declare i16 @__wolin_interp_append_word(ptr, i16, i16)",
+                        listOf(buf, pos, value),
+                    )
+                    TypeKind.BOOL -> pos = appendInterp(
+                        "__wolin_interp_append_bool",
+                        "declare i16 @__wolin_interp_append_bool(ptr, i16, i1)",
+                        listOf(buf, pos, value),
+                    )
+                    TypeKind.STRING -> pos = appendInterp(
+                        "__wolin_interp_append_string",
+                        "declare i16 @__wolin_interp_append_string(ptr, i16, ptr)",
+                        listOf(buf, pos, value),
+                    )
+                    TypeKind.FLOAT -> {
+                        usesFloatInterpolation = true
+                        pos = appendInterp(
+                            "__wolin_interp_append_float",
+                            "declare i16 @__wolin_interp_append_float(ptr, i16, float)",
+                            listOf(buf, pos, value),
+                        )
+                    }
+                    else -> error("checker allowed ${part.expr.type} in a template")
+                }
+            }
+        }
+
+        val end = b.instr(
+            IrType.Ptr,
+            "getelementptr i8, ptr ${buf.name}, i16 ${pos.name}",
+        )
+        b.instr(IrType.Void, "store i8 0, ptr ${end.name}")
+        return buf
+    }
+
+    private fun interpolationBuffer(e: StringTemplate): IrValue {
+        val global = interpBuffers.getOrPut(e) {
+            val name = "@__wolin_interp_${nextInterp++}"
+            constants += "$name = private global [256 x i8] zeroinitializer"
+            name
+        }
+        return b.instr(
+            IrType.Ptr,
+            "getelementptr inbounds [256 x i8], ptr $global, i32 0, i32 0",
+        )
+    }
+
+    private fun appendInterp(
+        helper: String,
+        declaration: String,
+        args: List<IrValue>,
+    ): IrValue {
+        usedInterpHelpers += helper
+        helperDeclarations += declaration
+        return b.call(IrType.I16, helper, args)
     }
 
     // ---- variables --------------------------------------------------------
@@ -185,12 +294,18 @@ class ExprEmitter(
         val addressed = e.type.kind == TypeKind.ARRAY || e.type.kind == TypeKind.STRING
         return when (val s = stmt.vars.lookup(e.name) ?: throw error("Unresolved variable ${e.name}")) {
             is VarStorage.Param -> s.value
-            is VarStorage.Global ->
-                if (addressed) IrValue("@${s.name}", IrType.Ptr)
-                else b.instr(ty, "load ${ty.llvmName()}, ptr @${s.name}")
-            is VarStorage.Local ->
-                if (addressed) s.ptr
-                else b.instr(ty, "load ${ty.llvmName()}, ptr ${s.ptr.name}")
+            is VarStorage.Global -> when {
+                // A string variable's slot holds the pointer; its value is
+                // the pointed-to bytes, not the slot.
+                e.type.kind == TypeKind.STRING -> b.instr(IrType.Ptr, "load ptr, ptr @${s.name}")
+                addressed -> IrValue("@${s.name}", IrType.Ptr)
+                else -> b.instr(ty, "load ${ty.llvmName()}, ptr @${s.name}")
+            }
+            is VarStorage.Local -> when {
+                e.type.kind == TypeKind.STRING -> b.instr(IrType.Ptr, "load ptr, ptr ${s.ptr.name}")
+                addressed -> s.ptr
+                else -> b.instr(ty, "load ${ty.llvmName()}, ptr ${s.ptr.name}")
+            }
             is VarStorage.Fixed -> {
                 val element = if (addressed) IrType.I8 else ty
                 val ptr = fixedPtr(s.address, element)

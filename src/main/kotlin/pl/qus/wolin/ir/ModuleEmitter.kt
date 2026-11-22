@@ -1,5 +1,6 @@
 package pl.qus.wolin.ir
 
+import pl.qus.wolin.ast.Ast
 import pl.qus.wolin.ast.ArrayAccess
 import pl.qus.wolin.ast.Assign
 import pl.qus.wolin.ast.BinaryOp
@@ -20,6 +21,7 @@ import pl.qus.wolin.ast.Location
 import pl.qus.wolin.ast.Program
 import pl.qus.wolin.ast.ReturnStmt
 import pl.qus.wolin.ast.Stmt
+import pl.qus.wolin.ast.StringTemplate
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
 import pl.qus.wolin.ast.WhenExpr
@@ -45,6 +47,14 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
 
     /** The name of the file's init function, set by [emitFile]. */
     var initFnName: String? = null
+        private set
+
+    /** Interpolation helpers this file calls. */
+    var usedInterpHelpers: Set<String> = emptySet()
+        private set
+
+    /** Whether this file formats a float in a template. */
+    var usesFloatInterpolation = false
         private set
 
     /** Emits [program] with names mangled as `<mangledPrefix>.<symbol>`. */
@@ -93,8 +103,14 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
         // stores nothing.
         initFnName = GlobalInitEmitter(b).emitFile(program, mangledPrefix)
 
+        usedInterpHelpers = stmt.expr.usedInterpHelpers.toSet()
+        usesFloatInterpolation = stmt.expr.usesFloatInterpolation
+
         val sections = mutableListOf<String>()
         if (constants.isNotEmpty()) sections += constants.joinToString("\n")
+        if (stmt.expr.helperDeclarations.isNotEmpty()) {
+            sections += stmt.expr.helperDeclarations.joinToString("\n")
+        }
         sections += b.render()
         return "target triple = \"mos-c64\"\n\n" + sections.joinToString("\n\n")
     }
@@ -197,6 +213,9 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 }
             }
             is Convert -> collectVarRefs(expr.value, out)
+            is StringTemplate -> expr.parts.forEach {
+                if (it is Ast.StringTemplate.Value) collectVarRefs(it.expr, out)
+            }
             else -> Unit
         }
     }

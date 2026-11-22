@@ -19,7 +19,12 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
      * Runs [prg] under VICE and returns the bytes of memory [readStart]..[readEnd]
      * (inclusive). Byte `i` of the result is memory `readStart + i`.
      */
-    fun run(prg: Path, readStart: Int, readEnd: Int): ByteArray {
+    fun run(
+        prg: Path,
+        readStart: Int,
+        readEnd: Int,
+        settleMillis: Long = RUN_SETTLE_MILLIS,
+    ): ByteArray {
         // Each emulator gets its own monitor port: a fixed port makes two
         // concurrent runs fight over the listener, and the loser then reads
         // the *other* program's memory.
@@ -37,7 +42,7 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
             .start()
         try {
             awaitMonitor(process, port)
-            Thread.sleep(RUN_SETTLE_MILLIS)
+            Thread.sleep(settleMillis)
             val monitor = ViceMonitor(HOST, port)
             val body = try {
                 monitor.memGet(readStart, readEnd)
@@ -108,7 +113,7 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
     private companion object {
         const val HOST = "127.0.0.1"
         const val MONITOR_TIMEOUT_MILLIS = 40_000L
-        const val RUN_SETTLE_MILLIS = 2_500L
+        const val RUN_SETTLE_MILLIS = 4_000L
         const val POLL_INTERVAL_MILLIS = 250L
         const val TERMINATE_TIMEOUT_MILLIS = 5_000L
     }

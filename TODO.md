@@ -9,6 +9,16 @@ catalogue in `UnsupportedTest`, and a code audit of 2026-11-15.
 
 ## This cycle — landed
 
+### 2026-11-22 — string interpolation
+
+Design: `docs/superpowers/specs/2026-11-22-string-interpolation-design.md`.
+Plan: `docs/superpowers/plans/2026-11-22-string-interpolation.md`.
+
+- [x] `${expr}` and `$name` for integers, `bool`, `string` and `float`.
+- [x] One static 256-byte buffer per template site; 255-byte result cap; no heap.
+- [x] Float via a self-contained IR formatter over compiler-rt soft-float; no C library.
+- [x] Borrowed-result contract documented.
+
 ### 2026-11-21 — labels and labelled jumps
 
 Design: `docs/superpowers/specs/2026-11-21-labels-design.md`.
@@ -81,8 +91,6 @@ No plan yet. Each was deferred from v1 for the stated reason.
       expensive feature in the set. Non-capturing function literals are v1.
 - [ ] **Array bounds checking and a dynamic allocator** — v1 arrays are
       fixed-address or global, with no bounds checks.
-- [ ] **String interpolation** (`${...}`) — backslash escapes are supported;
-      templates are rejected.
 - [x] **Link map** in the output — the CLI note "(no link map in v1)". Fixed:
       every link writes `<output>.map` next to the `.prg`.
 

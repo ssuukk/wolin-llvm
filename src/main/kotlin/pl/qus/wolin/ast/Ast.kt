@@ -116,6 +116,17 @@ sealed interface Ast {
     data class BoolLit(val value: Boolean, override var type: WolinType) : Expr
     data class CharLit(val value: Int, override var type: WolinType) : Expr
     data class StringLit(val bytes: ByteArray, override var type: WolinType) : Expr
+
+    /**
+     * An interpolated string: literal byte runs and expressions, in source
+     * order. A literal-only string stays a [StringLit].
+     */
+    data class StringTemplate(val parts: List<Part>, override var type: WolinType) : Expr {
+        sealed interface Part : Ast
+        data class Literal(val bytes: ByteArray) : Part
+        data class Value(val expr: Expr) : Part
+    }
+
     data class VarRef(val name: String, override var type: WolinType) : Expr
     data class UnaryOp(val op: String, val operand: Expr, override var type: WolinType, val prefix: Boolean = false) : Expr
     data class BinaryOp(val op: String, val left: Expr, val right: Expr, override var type: WolinType) : Expr
@@ -241,6 +252,8 @@ typealias RealLit = Ast.RealLit
 typealias BoolLit = Ast.BoolLit
 typealias CharLit = Ast.CharLit
 typealias StringLit = Ast.StringLit
+typealias StringTemplate = Ast.StringTemplate
+typealias StringPart = Ast.StringTemplate.Part
 typealias VarRef = Ast.VarRef
 typealias UnaryOp = Ast.UnaryOp
 typealias BinaryOp = Ast.BinaryOp

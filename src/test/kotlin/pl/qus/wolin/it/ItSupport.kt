@@ -51,6 +51,17 @@ fun runProgramAt0800(source: String): ByteArray {
     return ViceRunner().run(prg, 0x0800, 0x080F)
 }
 
+/** Compile [source], run it under VICE, and return memory [start]..[end]. */
+fun runProgramRange(
+    source: String,
+    start: Int,
+    end: Int,
+    settleMillis: Long = 4_000L,
+): ByteArray {
+    val prg = compileToPrg(source, "t")
+    return ViceRunner().run(prg, start, end, settleMillis)
+}
+
 /**
  * Compile [source] and return the IR text of the file's module.
  *

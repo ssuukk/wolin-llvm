@@ -1,5 +1,6 @@
 package pl.qus.wolin.driver
 
+import pl.qus.wolin.ir.InterpRuntime
 import pl.qus.wolin.ir.IrBuilder
 import pl.qus.wolin.ir.IrType
 import pl.qus.wolin.ir.IrValue
@@ -17,6 +18,10 @@ data class CompiledFile(
     val mangledPrefix: String,
     val moduleIr: String,
     val initFnName: String?,
+    /** Interpolation helpers the file's module calls. */
+    val usedInterpHelpers: Set<String> = emptySet(),
+    /** Whether the file formats a float in a template. */
+    val usesFloatInterp: Boolean = false,
 )
 
 /**
@@ -49,7 +54,13 @@ class DriverModule(private val b: IrBuilder) {
 
         val declares = files.mapNotNull { it.initFnName }.map { "declare void ${quoted(it)}()" } +
             (userMain?.let { "declare void ${quoted("${it.mangledPrefix}.main")}()" } ?: "")
-        val body = if (declares.isEmpty()) b.render() else declares.joinToString("\n") + "\n\n" + b.render()
+        val runtime = InterpRuntime.emit(
+            used = files.flatMap { it.usedInterpHelpers }.toSet(),
+            includeFloat = files.any { it.usesFloatInterp },
+        )
+        val body = listOf(runtime, declares.joinToString("\n"), b.render())
+            .filter { it.isNotEmpty() }
+            .joinToString("\n\n")
         return "target triple = \"mos-c64\"\n\n" + body
     }
 

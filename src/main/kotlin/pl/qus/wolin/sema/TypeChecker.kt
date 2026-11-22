@@ -211,6 +211,9 @@ class TypeChecker {
             }
             is Convert -> varRefs(expr.value, out)
             is ArrayLiteral -> expr.elements.forEach { varRefs(it, out) }
+            is StringTemplate -> expr.parts.forEach {
+                if (it is Ast.StringTemplate.Value) varRefs(it.expr, out)
+            }
             else -> Unit
         }
         return out
@@ -519,6 +522,9 @@ class TypeChecker {
                 visitLabelExpr(e.array, out)
                 visitLabelExpr(e.index, out)
             }
+            is StringTemplate -> e.parts.forEach {
+                if (it is Ast.StringTemplate.Value) visitLabelExpr(it.expr, out)
+            }
             is Convert -> visitLabelExpr(e.value, out)
             is ArrayLiteral -> e.elements.forEach { visitLabelExpr(it, out) }
             else -> Unit
@@ -664,6 +670,7 @@ class TypeChecker {
         is BoolLit -> Types.bool.also { expr.type = it }
         is CharLit -> Types.ubyte.also { expr.type = it }
         is StringLit -> Types.string.also { expr.type = it }
+        is StringTemplate -> checkStringTemplate(expr)
         is NullLit -> WolinType(TypeKind.UNIT, nullable = true).also { expr.type = it }
         is VarRef -> checkVarRef(expr)
         is UnaryOp -> checkUnary(expr, expected)
@@ -676,6 +683,42 @@ class TypeChecker {
         is ArrayAccess -> checkArrayAccess(expr)
         is Convert -> checkConvert(expr)
         is ArrayLiteral -> throw SemaException("Array literal can only initialise a declaration")
+    }
+
+    /**
+     * Checks each interpolation part and bounds the fixed text. A `string`
+     * part contributes no fixed bytes: its runtime length is capped by the
+     * 255-byte result buffer at emit time.
+     */
+    private fun checkStringTemplate(expr: StringTemplate): WolinType {
+        var fixed = 0
+        for (part in expr.parts) when (part) {
+            is Ast.StringTemplate.Literal -> {
+                if (part.bytes.any { it == 0.toByte() }) {
+                    throw SemaException("NUL is not allowed in a string template")
+                }
+                fixed += part.bytes.size
+            }
+            is Ast.StringTemplate.Value -> {
+                val type = checkExpr(part.expr, null)
+                fixed += when (type.kind) {
+                    TypeKind.UBYTE -> 3
+                    TypeKind.BYTE -> 4
+                    TypeKind.UWORD -> 5
+                    TypeKind.WORD -> 6
+                    TypeKind.BOOL -> 5
+                    TypeKind.STRING -> 0
+                    TypeKind.FLOAT -> 16
+                    else -> throw SemaException(
+                        "Unsupported construct: $type in string interpolation",
+                    )
+                }
+            }
+        }
+        if (fixed > 255) {
+            throw SemaException("String interpolation is limited to 255 bytes")
+        }
+        return Types.string.also { expr.type = it }
     }
 
     /**
