@@ -65,4 +65,14 @@ class LocalSlotTest {
         """)
         assertEquals(1, allocas(ir))
     }
+
+    @Test fun `a local in an array initialiser element gets a slot`() {
+        val ir = ir("""
+            fun main() {
+                var a: ubyte[ubyte]^0x3000 = [if (true) { var b: ubyte = 1; b } else { 2 }]
+                while (true) {}
+            }
+        """)
+        assertTrue(ir.contains("alloca i8"), ir)
+    }
 }

@@ -565,6 +565,7 @@ class StmtEmitter(private val b: IrBuilder) {
                 collectLocalDeclsInExpr(e.index, out)
             }
             is Convert -> collectLocalDeclsInExpr(e.value, out)
+            is ArrayLiteral -> e.elements.forEach { collectLocalDeclsInExpr(it, out) }
             else -> Unit
         }
     }
