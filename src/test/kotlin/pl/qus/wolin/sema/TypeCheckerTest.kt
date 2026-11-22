@@ -273,7 +273,24 @@ class TypeCheckerTest {
 
     @Test fun `a negated literal does not retype a variable operand`() {
         assertThrows<SemaException> {
-            typeChecker("fun f() { var w: word = 1; var b: byte = 1; var r = w == b }")
+            typeChecker("fun f() { var w: word = 1; var b: byte = 1; var r = w == -b }")
+        }
+    }
+
+    @Test fun `mixed-sign literals keep their previous typing`() {
+        typeChecker("fun f() { var r = -1 == 0 }")
+        typeChecker("fun f() { var r = 1 == -1 }")
+    }
+
+    @Test fun `a sign-prefixed literal does not turn a float operand legal`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var x: float = 1.5; var r = x == -1 }")
+        }
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var x: float = 1.5; var r = x == +1 }")
+        }
+        assertThrows<SemaException> {
+            typeChecker("fun f(): bool { var x: float = 1.5; return when (x) { -1 -> true else -> false } }")
         }
     }
 }

@@ -573,7 +573,7 @@ class TypeChecker {
                 entry.conditions.forEach { condition ->
                     // A literal takes the subject's type, so `when (x: uword) { 1 -> }`
                     // compares `uword`s, exactly like `x == 1`.
-                    val condType = if (isContextualIntLiteral(condition) && subjectType != null) {
+                    val condType = if (isContextualIntLiteral(condition) && subjectType != null && subjectType.isInteger) {
                         checkExpr(condition, subjectType)
                     } else {
                         checkExpr(condition, null)
@@ -729,7 +729,7 @@ class TypeChecker {
             "+" -> {
                 val operand = expr.operand
                 if (operand is IntLit) {
-                    val type = literalType(operand.value, expected)
+                    val type = literalType(operand.value, expected?.takeIf { it.isInteger })
                     operand.type = type
                     expr.type = type
                 } else {
@@ -766,13 +766,21 @@ class TypeChecker {
         val leftType: WolinType
         val rightType: WolinType
         when {
-            isContextualIntLiteral(left) && !isContextualIntLiteral(right) && right !is RealLit -> {
+            left is IntLit && right !is IntLit && right !is RealLit -> {
                 rightType = checkExpr(right, null)
                 leftType = checkExpr(left, rightType)
             }
-            isContextualIntLiteral(right) && !isContextualIntLiteral(left) && left !is RealLit -> {
+            right is IntLit && left !is IntLit && left !is RealLit -> {
                 leftType = checkExpr(left, null)
                 rightType = checkExpr(right, leftType)
+            }
+            isContextualIntLiteral(right) && !isContextualIntLiteral(left) && left !is RealLit -> {
+                leftType = checkExpr(left, null)
+                rightType = if (leftType.isInteger) checkExpr(right, leftType) else checkExpr(right, null)
+            }
+            isContextualIntLiteral(left) && !isContextualIntLiteral(right) && right !is RealLit -> {
+                rightType = checkExpr(right, null)
+                leftType = if (rightType.isInteger) checkExpr(left, rightType) else checkExpr(left, null)
             }
             else -> {
                 leftType = checkExpr(left, null)
