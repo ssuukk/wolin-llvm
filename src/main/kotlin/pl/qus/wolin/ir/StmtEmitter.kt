@@ -504,14 +504,27 @@ class StmtEmitter(private val b: IrBuilder) {
     private fun collectLocalDecls(stmts: List<Stmt>, out: MutableList<LocalDecl>) {
         for (s in stmts) {
             when (s) {
-                is LocalDecl -> out += s
+                is LocalDecl -> {
+                    out += s
+                    s.init?.let { collectLocalDeclsInExpr(it, out) }
+                }
                 is BlockStmt -> collectLocalDecls(s.body, out)
                 is IfStmt -> {
+                    collectLocalDeclsInExpr(s.cond, out)
                     collectLocalDecls(s.then, out)
                     collectLocalDecls(s.otherwise, out)
                 }
-                is WhileStmt -> collectLocalDecls(s.body, out)
-                is WhenStmt -> s.entries.forEach { collectLocalDecls(it.body, out) }
+                is WhileStmt -> {
+                    collectLocalDeclsInExpr(s.cond, out)
+                    collectLocalDecls(s.body, out)
+                }
+                is WhenStmt -> {
+                    s.subject?.let { collectLocalDeclsInExpr(it, out) }
+                    s.entries.forEach { entry ->
+                        entry.conditions.forEach { collectLocalDeclsInExpr(it, out) }
+                        collectLocalDecls(entry.body, out)
+                    }
+                }
                 is ExprStmt -> collectLocalDeclsInExpr(s.expr, out)
                 is ReturnStmt -> s.value?.let { collectLocalDeclsInExpr(it, out) }
                 else -> Unit
@@ -519,14 +532,21 @@ class StmtEmitter(private val b: IrBuilder) {
         }
     }
 
-    /** Only an `if` in expression position can nest statements. */
+    /** An `if` or `when` in expression position can nest statements anywhere an expression nests. */
     private fun collectLocalDeclsInExpr(e: Expr, out: MutableList<LocalDecl>) {
         when (e) {
             is IfExpr -> {
+                collectLocalDeclsInExpr(e.cond, out)
                 collectLocalDecls(e.then, out)
                 collectLocalDecls(e.otherwise, out)
             }
-            is WhenExpr -> e.entries.forEach { collectLocalDecls(it.body, out) }
+            is WhenExpr -> {
+                e.subject?.let { collectLocalDeclsInExpr(it, out) }
+                e.entries.forEach { entry ->
+                    entry.conditions.forEach { collectLocalDeclsInExpr(it, out) }
+                    collectLocalDecls(entry.body, out)
+                }
+            }
             is UnaryOp -> collectLocalDeclsInExpr(e.operand, out)
             is BinaryOp -> {
                 collectLocalDeclsInExpr(e.left, out)

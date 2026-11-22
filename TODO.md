@@ -112,13 +112,15 @@ Moved from the "Known gaps" section below; now v2 work items:
       is typed with `fits` (the signed range) rather than `fitsWidth` (the
       bit-pattern range, which the bit-assignment operators already use).
       Workaround: a negative literal (`w & -256`).
-- [ ] **A local declared inside an `if` *expression* branch has no stack
+- [x] **A local declared inside an `if` *expression* branch has no stack
       slot.** `var x = if (c) { var b: byte = -1; b } else { 0 }` aborts the
       compiler with `IllegalStateException: Local b has no slot`: the
       pre-scan (`StmtEmitter.collectLocalDecls`) reaches a `LocalDecl` only
       as a statement, so the declaration inside an expression-position
       `if` branch is never allocated. Pre-existing (reproduces on `main`);
       found while landing the conversions.
+      Fixed: the local pre-scan now visits declaration initialisers, statement
+      conditions, `when` subjects/conditions, and nested expression conditions.
 - [ ] **A bit-assignment from a wider integer emits invalid IR.** `x := g`
       with `x: ubyte` and `g: uword` emits `zext i16 %g to i8` (and
       `sext i16 %g to i8` for a signed `word`), which LLVM rejects — a

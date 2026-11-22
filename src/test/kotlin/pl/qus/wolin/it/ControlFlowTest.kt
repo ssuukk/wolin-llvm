@@ -142,4 +142,16 @@ class ControlFlowTest {
         """)
         assertEquals(20, bytes[0].toInt() and 0xFF)
     }
+
+    @Test fun `a local in an if-expression initialiser runs on the 6502`() {
+        val bytes = runProgram("""
+            fun main() {
+                var x = if (true) { var b: byte = -1; b } else { -2 }
+                var out: ubyte^0x400 = 0
+                out = x.toUbyte()
+                while (true) {}
+            }
+        """)
+        assertEquals(0xFF, bytes[0].toInt() and 0xFF)
+    }
 }
