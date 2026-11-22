@@ -177,14 +177,49 @@ var fresh: ubyte = ++i
 - **Characters:** `'A'`, `'\n'` → `ubyte`. Escapes: `\n` `\t` `\r` `\b` `\\`
   `\'` `\"` `\uXXXX`.
 - **Strings:** `"text"` or triple-quoted `""""text"""`. Escapes: `\n` `\t`
-  `\r` `\0` `\\` `\"` `\'` `\uXXXX`. Stored NUL-terminated in the data
-  section. String interpolation `${...}` is a compile error (see `TODO.md`).
+  `\r` `\0` `\\` `\"` `\'` `\$` `\uXXXX`. Stored NUL-terminated in the data
+  section. `${expr}` and `$name` interpolate (see below).
 
 ```kotlin
 var ch: ubyte = 'A'
 var s: string = "hi\r\n"
 var b: ubyte = s[0]             // indexing a string yields a ubyte
 ```
+
+### String interpolation
+
+`"${expr}"` and `"$name"` render a value into the string. `\$` is a literal
+dollar; a `$` not followed by an identifier or `{` is ordinary text.
+
+| Part type | Rendering |
+|---|---|
+| `ubyte`, `byte`, `uword`, `word` | decimal |
+| `bool` | `true` / `false` |
+| `string` | the pointed-to bytes |
+| `float` | 7 significant digits; fixed for exponents −3..6, `E` notation outside; `.0` on integral values |
+
+There is no `char` type: `'A'` is a `ubyte`, so `${'A'}` renders `65`.
+`unit`, arrays and function pointers are compile errors.
+
+```kotlin
+var n: ubyte = 42
+var f: float = 1.5
+print("n=${n} f=${f}")   // n=42 f=1.5
+```
+
+**Storage and lifetime.** Each syntactic template site has one static
+256-byte buffer. The result is capped at 255 bytes plus NUL; a runtime
+`string` part is truncated at the cap. The returned pointer is *borrowed*:
+evaluating the **same site** again (a loop, a recursive call, another call
+of the enclosing function) overwrites the bytes. Distinct sites have
+distinct buffers, so nested templates and several interpolations in one
+expression are safe. Copy the bytes if a result must survive a
+re-evaluation.
+
+Float interpolation is a self-contained formatter using the compiler-rt
+soft-float routines float arithmetic already links; it adds no C library.
+The format is 7 significant digits, not Kotlin's shortest round-trip:
+`3.1415927f` prints `3.141593`.
 
 ## Arrays
 

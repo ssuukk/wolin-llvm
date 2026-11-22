@@ -1,5 +1,6 @@
 package pl.qus.wolin.sema
 
+import org.antlr.v4.runtime.tree.TerminalNode
 import pl.qus.wolin.ast.*
 import pl.qus.wolin.parser.KotlinParser
 
@@ -504,7 +505,7 @@ class AstBuilder {
         ctx.BooleanLiteral()?.let { return BoolLit(it.text == "true", Types.bool) }
         ctx.RealLiteral()?.let { return RealLit(it.text.replace("_", "").toDouble(), Types.float) }
         ctx.CharacterLiteral()?.let { return CharLit(characterValue(it.text), Types.ubyte) }
-        ctx.stringLiteral()?.let { return StringLit(stringBytes(it.text), Types.string) }
+        ctx.stringLiteral()?.let { return buildStringLiteral(it) }
         ctx.NullLiteral()?.let { return NullLit(WolinType(TypeKind.UNIT, nullable = true)) }
         ctx.IntegerLiteral()?.let { return IntLit(integerValue(it.text), Types.unit) }
         ctx.HexLiteral()?.let { return IntLit(integerValue(it.text), Types.unit) }
@@ -637,29 +638,91 @@ class AstBuilder {
     }
 
     /**
-     * The bytes of a string literal, with the backslash escapes decoded.
+     * Builds a string literal as a plain [StringLit] or, when it contains
+     * `${}` / `$name`, a [StringTemplate] of literal runs and expressions.
      *
-     * The standard Kotlin escapes are decoded into single bytes: `\n`, `\t`,
-     * `\r`, `\0`, `\\`, `\"`, `\'` and `\uXXXX`. The decoded bytes are what
-     * the IR constant spells, so the emitter never sees a backslash.
+     * Adjacent literal runs are merged. A template with no expression part is
+     * folded back to a plain [StringLit], so the old literal path — including
+     * global constant folding — is unchanged.
      */
+    private fun buildStringLiteral(ctx: KotlinParser.StringLiteralContext): Expr {
+        val parts = mutableListOf<StringPart>()
 
-    private fun stringBytes(text: String): ByteArray {
-        val body = when {
-            text.startsWith("\"\"\"") -> text.removePrefix("\"\"\"").removeSuffix("\"\"\"")
-            else -> text.removePrefix("\"").removeSuffix("\"")
+        fun addLiteral(bytes: ByteArray) {
+            if (bytes.isEmpty()) return
+            val last = parts.lastOrNull()
+            if (last is Ast.StringTemplate.Literal) {
+                parts[parts.lastIndex] = Ast.StringTemplate.Literal(last.bytes + bytes)
+            } else {
+                parts += Ast.StringTemplate.Literal(bytes)
+            }
         }
-        val out = ArrayList<Byte>(body.length)
-        // The literal is walked by code point, not by Char: the PETSCII set
-        // includes characters outside the Basic Multilingual Plane (the
-        // U+1FBxx block elements), which a Char would split into surrogates.
-        val points = body.codePoints().toArray()
+
+        fun addValue(expr: Expr) {
+            parts += Ast.StringTemplate.Value(expr)
+        }
+
+        fun visitLine(lit: KotlinParser.LineStringLiteralContext) {
+            for (child in lit.children) when (child) {
+                is KotlinParser.LineStringContentContext -> {
+                    child.LineStrText()?.let { addLiteral(decodeStringContent(it.text)) }
+                    child.LineStrEscapedChar()?.let { addLiteral(decodeStringContent(it.text)) }
+                    child.LineStrRef()?.let {
+                        addValue(VarRef(it.text.removePrefix("$").removeSurrounding("`"), Types.unit))
+                    }
+                }
+                is KotlinParser.LineStringExpressionContext ->
+                    addValue(buildExpression(child.expression()))
+                else -> Unit
+            }
+        }
+
+        fun visitMulti(lit: KotlinParser.MultiLineStringLiteralContext) {
+            for (child in lit.children) when (child) {
+                is KotlinParser.MultiLineStringContentContext -> {
+                    child.MultiLineStrText()?.let { addLiteral(decodeStringContent(it.text)) }
+                    child.MultiLineStrEscapedChar()?.let { addLiteral(decodeStringContent(it.text)) }
+                    child.MultiLineStrRef()?.let {
+                        addValue(VarRef(it.text.removePrefix("$").removeSurrounding("`"), Types.unit))
+                    }
+                }
+                is KotlinParser.MultiLineStringExpressionContext ->
+                    addValue(buildExpression(child.expression()))
+                is KotlinParser.LineStringLiteralContext -> visitLine(child)
+                is TerminalNode ->
+                    if (child.symbol.type == KotlinParser.MultiLineStringQuote) {
+                        addLiteral(decodeStringContent(child.text))
+                    }
+                else -> Unit
+            }
+        }
+
+        ctx.lineStringLiteral()?.let(::visitLine)
+        ctx.multiLineStringLiteral()?.let(::visitMulti)
+
+        if (parts.all { it is Ast.StringTemplate.Literal }) {
+            val bytes = parts.fold(ByteArray(0)) { acc, part ->
+                acc + (part as Ast.StringTemplate.Literal).bytes
+            }
+            return StringLit(bytes, Types.string)
+        }
+        return StringTemplate(parts, Types.string)
+    }
+
+    /**
+     * The bytes of one string-literal content token, with backslash escapes
+     * decoded. `$` is ordinary text here: the lexer already split `${}` and
+     * `$name` into their own tokens.
+     */
+    private fun decodeStringContent(text: String): ByteArray {
+        val out = ArrayList<Byte>(text.length)
+        // Walk by code point, not by Char: the PETSCII set includes
+        // characters outside the BMP (the U+1FBxx block elements), which a
+        // Char would split into surrogates.
+        val points = text.codePoints().toArray()
         var p = 0
         while (p < points.size) {
             val cp = points[p]
-            if (cp == '$'.code && p + 1 < points.size && points[p + 1] == '{'.code) {
-                unsupported("string interpolation")
-            }
             if (cp != '\\'.code || p + 1 >= points.size) {
                 out += PetsciiConverter.codePointToPetscii(cp)
                 p++
@@ -673,8 +736,9 @@ class AstBuilder {
                 '\\' -> out += PetsciiConverter.byteToPetscii('\\'.code.toByte())
                 '"' -> out += PetsciiConverter.byteToPetscii('"'.code.toByte())
                 '\'' -> out += PetsciiConverter.byteToPetscii('\''.code.toByte())
+                '$' -> out += PetsciiConverter.codePointToPetscii('$'.code)
                 'u' -> {
-                    val hex = body.substring(p + 2, minOf(p + 6, body.length))
+                    val hex = text.substring(p + 2, minOf(p + 6, text.length))
                     val code = hex.toIntOrNull(16)
                         ?: throw SemaException("Unsupported escape \\u$hex in string literal")
                     out += PetsciiConverter.codePointToPetscii(code)

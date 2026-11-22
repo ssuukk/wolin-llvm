@@ -1,9 +1,11 @@
 package pl.qus.wolin.ir
 
+import pl.qus.wolin.ast.Ast
 import pl.qus.wolin.ast.ArrayAccess
 import pl.qus.wolin.ast.ArrayLiteral
 import pl.qus.wolin.ast.IntLit
 import pl.qus.wolin.ast.StringLit
+import pl.qus.wolin.ast.StringTemplate
 import pl.qus.wolin.ast.Assign
 import pl.qus.wolin.ast.BinaryOp
 import pl.qus.wolin.ast.BreakStmt
@@ -566,6 +568,9 @@ class StmtEmitter(private val b: IrBuilder) {
             }
             is Convert -> collectLocalDeclsInExpr(e.value, out)
             is ArrayLiteral -> e.elements.forEach { collectLocalDeclsInExpr(it, out) }
+            is StringTemplate -> e.parts.forEach {
+                if (it is Ast.StringTemplate.Value) collectLocalDeclsInExpr(it.expr, out)
+            }
             else -> Unit
         }
     }
@@ -635,6 +640,9 @@ class StmtEmitter(private val b: IrBuilder) {
                 collectLabelNamesInExpr(e.index, out)
             }
             is Convert -> collectLabelNamesInExpr(e.value, out)
+            is StringTemplate -> e.parts.forEach {
+                if (it is Ast.StringTemplate.Value) collectLabelNamesInExpr(it.expr, out)
+            }
             else -> Unit
         }
     }

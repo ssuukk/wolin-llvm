@@ -223,6 +223,8 @@ private fun emitFiles(program: Ast.Program): List<CompiledFile>? {
             mangledPrefix = scope.mangledPrefix,
             moduleIr = moduleIr,
             initFnName = moduleEmitter.initFnName,
+            usedInterpHelpers = moduleEmitter.usedInterpHelpers,
+            usesFloatInterp = moduleEmitter.usesFloatInterpolation,
         )
     }
     return compiled

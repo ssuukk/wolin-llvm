@@ -117,21 +117,6 @@ class UnsupportedTest {
         assertFailsWith<SemaException> { check("typealias Foo = ubyte") }
     }
 
-    /**
-     * String interpolation was silently mis-compiled: the literal's source
-     * text was taken verbatim, so `"a ${1} b"` became the eight literal
-     * bytes `a`, ` `, `$`, `{`, `1`, `}`, ` `, `b`. The spec lists string
-     * interpolation among the unsupported constructs, so it must be
-     * rejected rather than compiled wrong.
-     */
-    @Test fun `string interpolation is rejected`() {
-        assertRejected("""fun f() { val s = "a ${'$'}{1} b" }""")
-    }
-
-    @Test fun `string interpolation is rejected even when it is the whole literal`() {
-        assertRejected("""fun f() { val s = "${'$'}{1}" }""")
-    }
-
     @Test fun `an unlabelled break and continue stay supported`() {
         check("fun f() { while (true) { break } }")
         check("fun f() { while (true) { continue } }")
