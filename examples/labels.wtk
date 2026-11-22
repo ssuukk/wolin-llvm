@@ -1,0 +1,33 @@
+// labels.wtk — labels: named jump points.
+//
+// nextColor skips colour 4: on 3 it jumps to hold@ (return@hold), which
+// returns 5. main retries a colour with continue@top and leaves the
+// colour cycle with break@calm.
+//
+// Build:
+//   make examples/labels.prg
+
+package app
+
+import c64.vic.borderColor
+
+fun nextColor(c: ubyte): ubyte {
+    if (c == 3) return@hold
+    return c + 1
+    hold@
+    return 5
+}
+
+fun main() {
+    var c: ubyte = 1
+    top@
+    while (true) {
+        c = nextColor(c)
+        if (c == 2) continue@top
+        if (c == 8) break@calm
+        borderColor = c
+    }
+    calm@
+    borderColor = 0
+    while (true) {}
+}

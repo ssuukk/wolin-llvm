@@ -104,8 +104,10 @@ fun chrout^0xffd2(c: ubyte^CPU.A)  // fixed-address function: a ROM call
 ### Statements and expressions
 
 `if` / `else`, `when` (with or without a subject), `while`, `do..while`,
-`break`, `continue`, `return`, and `return@0xea31` — a tail jump to a fixed
-address, for the "continue with the ROM routine" idiom.
+`break`, `continue`, `return`. Labels (`name@`) are named jump points, with
+`break@name` / `continue@name` / `return@name` jumping to one, and
+`return@0xea31` a tail jump to a fixed address, for the "continue with the
+ROM routine" idiom.
 
 Assignments: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, and the bit-assignment
 operators `:=` (or), `.=` (and), `&=`, `|=`.
@@ -150,6 +152,8 @@ java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt \
   [REFERENCE.md](REFERENCE.md#petscii)).
 - `raster_irq.wtk` — an open-border sprite and a raster-interrupt
   colour band.
+- `labels.wtk` — a border-colour cycle driven by labels: `return@` skips a
+  colour, `continue@` retries the loop, `break@` leaves it.
 
 ## Tests
 

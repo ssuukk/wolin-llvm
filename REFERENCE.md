@@ -98,6 +98,10 @@ break
 continue
 return value
 return@0xea31                 // tail jump to a fixed address: "continue in the ROM"
+name@                         // a label: a named jump point
+break@name                    // jump to the label
+continue@name
+return@name                   // the label form of the tail-jump idiom
 ```
 
 - `if` and `when` also work as **expressions**: the value is the last
@@ -109,10 +113,10 @@ var sign: byte = if (n < 0) -1 else 1
 var code: ubyte = when (key) { 0x4C -> 1; 0x4F -> 2; else -> 0 }
 ```
 
-- `break`/`continue` take no label; a label is a compile error.
-- `return@<label>` is a compile error; `return@0x<address>` (a hex or
-  decimal integer literal) is the tail-jump idiom for returning control to a
-  ROM routine that called you.
+- Unlabelled `break`/`continue` target the innermost enclosing loop;
+  `break@name`, `continue@name`, `return@name` jump to the label `name`.
+- A label is a named point inside a function: references may be forward or
+  backward, and labels are local to the function.
 
 ## Operators
 
@@ -308,6 +312,39 @@ fun patch() {
     return@0xea31        // jump into the ROM, not back to the caller
 }
 ```
+
+### Labels
+
+A label is a named point inside a function:
+
+```kotlin
+fun main() {
+    var i: ubyte = 0
+    scan@
+    while (i < 4) {
+        i = i + 1
+        if (i == 2) continue@scan
+    }
+    done@
+    // ...
+}
+```
+
+`name@` marks the point; `break@name`, `continue@name` and `return@name` jump
+to it. All three compile to the same `jmp` to the label's block; the names are
+intent: `break` leaves a region, `continue` resumes a loop, `return` is the
+label form of the `return@<address>` tail-jump idiom. A label may be
+referenced from before or after its definition, and is local to the function.
+A label name may be any identifier.
+
+Placement idiom: put `scan@` before a loop to retry it with `continue@scan`,
+and `done@` after the loop to leave it with `break@done`. One label cannot
+serve both: the continue target and the break target are different points.
+
+A `return@<label>` is an in-function return: unlike the address form, it does
+not strip the `interrupt` attribute from an interrupt handler. In an `if`
+or `when` expression, a branch that ends in a label is a `unit` branch: the
+other branch's value is used, and the jumping branch contributes none.
 
 ### Interrupts
 
@@ -525,6 +562,8 @@ Errors are `SemaException`s with a message that names the problem:
 | `String initialiser needs a ubyte element type` | a string initialiser on a `uword`-element array |
 | `String initialiser too long` (with the length and the domain) | a string whose bytes + NUL exceed the index domain |
 | `local arrays need a fixed address in v1` | an array initialiser on a local non-fixed array |
+| `Unknown label X` | a labelled jump to a name that is not a label of the current function |
+| `Label X already defined` | the same label name declared twice in one function |
 
 ## Semantics notes — where v1 differs from the old Wolin
 

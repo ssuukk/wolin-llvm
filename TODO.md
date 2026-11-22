@@ -9,6 +9,21 @@ catalogue in `UnsupportedTest`, and a code audit of 2026-11-15.
 
 ## This cycle — landed
 
+### 2026-11-21 — labels and labelled jumps
+
+Design: `docs/superpowers/specs/2026-11-21-labels-design.md`.
+
+- [x] A `name@` statement is a label: a named point of the function, visible
+      forward and backward, function-local; it emits one basic block.
+- [x] `break@name` / `continue@name` / `return@name` each compile to one
+      `jmp` to the label's block — the name is intent, not mechanism;
+      `return@<label>` keeps an interrupt handler's attribute (only the
+      address form drops it).
+- [x] The `if`/`when` expression phi names the block that produced each
+      branch's value: a branch that leaves through a jump (a loop or a
+      label) contributes no incoming, fixing the invalid
+      `phi i8 [ 5, %if.then ]` IR.
+
 ### 2026-11-17 — array initialisers
 
 Design: `docs/superpowers/specs/2026-11-17-array-initialiser-design.md`.
@@ -54,7 +69,7 @@ Plan: `docs/superpowers/plans/2026-11-15-xor-signed-byte.md`.
 
 No plan yet. Each was deferred from v1 for the stated reason.
 
-- [ ] **Statements and control flow:** `break@` / `continue@` /
+- [x] **Statements and control flow:** `break@` / `continue@` /
       `return@` with a *label* (the address form `return@0xea31` is v1),
       labels.
 - [ ] **Exceptions** (`try` / `catch` / `throw`) — LLVM exception handling
