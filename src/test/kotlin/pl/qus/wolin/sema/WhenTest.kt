@@ -72,6 +72,9 @@ class WhenTest {
         assertThrows<SemaException> {
             typeChecker("fun f(x: ubyte) { var r: ubyte = 0; r = when (x) { 1 -> 10 } }")
         }
+        assertThrows<SemaException> {
+            typeChecker("fun g(v: ubyte): ubyte { return v }\nfun f(x: ubyte): ubyte { return g(when (x) { 1 -> 10 }) }")
+        }
     }
 
     @Test fun `a when statement without else is still allowed`() {

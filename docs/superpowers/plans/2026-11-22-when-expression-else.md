@@ -20,7 +20,7 @@
 
 ## Review Focus
 
-1. **Every value context rejects the missing `else`.** Return, declaration initialiser, and assignment value route through `checkWhenExpr`; a reader expects the same error in each. (A `when` as a call argument is not parsed by this grammar, so it is not a reachable context.) → pinned by `a when expression without else is rejected in value positions`.
+1. **Every value context rejects the missing `else`.** Return, declaration initialiser, assignment value, and call argument route through `checkWhenExpr`; a reader expects the same error in each. → pinned by `a when expression without else is rejected in value positions`.
 2. **Statement-form `when` stays legal.** `when (x) { 1 -> { } }` as a statement is a fall-through `WhenStmt`, not an error. → pinned by `a when statement without else is still allowed`.
 3. **Empty expression errors.** `when (x) { }` in value position has no entries at all and must not silently become `unit`. → pinned by `an empty when expression is rejected`.
 4. **`else` present keeps working.** A one-branch `else` and a normal `else` expression still compile and type as before. → pinned by `a when expression with else still works`.
@@ -57,6 +57,9 @@ Add `import kotlin.test.assertEquals` to `WhenTest`, then add:
     }
     assertThrows<SemaException> {
         typeChecker("fun f(x: ubyte) { var r: ubyte = 0; r = when (x) { 1 -> 10 } }")
+    }
+    assertThrows<SemaException> {
+        typeChecker("fun g(v: ubyte): ubyte { return v }\nfun f(x: ubyte): ubyte { return g(when (x) { 1 -> 10 }) }")
     }
 }
 
