@@ -435,8 +435,12 @@ class StmtEmitter(private val b: IrBuilder) {
         stmts.dropLast(1).forEach { emit(it) }
         // A terminator among the earlier statements makes the whole value
         // position dead: the branch leaves through the jump, and nothing is
-        // emitted for the last expression.
-        if (terminated) return null
+        // emitted for the last expression. A trailing label still opens its
+        // block, though: a forward jump may target it.
+        if (terminated) {
+            (stmts.last() as? LabelStmt)?.let { emit(it) }
+            return null
+        }
         return when (val last = stmts.last()) {
             is ExprStmt -> expr.emit(last.expr)
             is BlockStmt -> {
@@ -558,13 +562,21 @@ class StmtEmitter(private val b: IrBuilder) {
         for (s in stmts) {
             when (s) {
                 is LabelStmt -> out += s.name
+                is LocalDecl -> s.init?.let { collectLabelNamesInExpr(it, out) }
                 is BlockStmt -> collectLabelNamesIn(s.body, out)
                 is IfStmt -> {
+                    collectLabelNamesInExpr(s.cond, out)
                     collectLabelNamesIn(s.then, out)
                     collectLabelNamesIn(s.otherwise, out)
                 }
-                is WhileStmt -> collectLabelNamesIn(s.body, out)
-                is WhenStmt -> s.entries.forEach { collectLabelNamesIn(it.body, out) }
+                is WhileStmt -> {
+                    collectLabelNamesInExpr(s.cond, out)
+                    collectLabelNamesIn(s.body, out)
+                }
+                is WhenStmt -> {
+                    s.subject?.let { collectLabelNamesInExpr(it, out) }
+                    s.entries.forEach { collectLabelNamesIn(it.body, out) }
+                }
                 is ExprStmt -> collectLabelNamesInExpr(s.expr, out)
                 is ReturnStmt -> s.value?.let { collectLabelNamesInExpr(it, out) }
                 else -> Unit
@@ -572,14 +584,36 @@ class StmtEmitter(private val b: IrBuilder) {
         }
     }
 
-    /** Only an `if` or `when` in expression position can nest statements. */
+    /** An `if` or `when` in expression position can nest statements anywhere an expression nests. */
     private fun collectLabelNamesInExpr(e: Expr, out: MutableSet<String>) {
         when (e) {
             is IfExpr -> {
+                collectLabelNamesInExpr(e.cond, out)
                 collectLabelNamesIn(e.then, out)
                 collectLabelNamesIn(e.otherwise, out)
             }
-            is WhenExpr -> e.entries.forEach { collectLabelNamesIn(it.body, out) }
+            is WhenExpr -> {
+                e.subject?.let { collectLabelNamesInExpr(it, out) }
+                e.entries.forEach { collectLabelNamesIn(it.body, out) }
+            }
+            is UnaryOp -> collectLabelNamesInExpr(e.operand, out)
+            is BinaryOp -> {
+                collectLabelNamesInExpr(e.left, out)
+                collectLabelNamesInExpr(e.right, out)
+            }
+            is Call -> {
+                collectLabelNamesInExpr(e.callee, out)
+                e.args.forEach { collectLabelNamesInExpr(it, out) }
+            }
+            is Assign -> {
+                collectLabelNamesInExpr(e.target, out)
+                collectLabelNamesInExpr(e.value, out)
+            }
+            is ArrayAccess -> {
+                collectLabelNamesInExpr(e.array, out)
+                collectLabelNamesInExpr(e.index, out)
+            }
+            is Convert -> collectLabelNamesInExpr(e.value, out)
             else -> Unit
         }
     }

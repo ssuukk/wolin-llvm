@@ -464,13 +464,24 @@ class TypeChecker {
         when (s) {
             is LabelStmt ->
                 if (!out.add(s.name)) throw SemaException("Label ${s.name} already defined")
+            is LocalDecl -> s.init?.let { visitLabelExpr(it, out) }
             is BlockStmt -> s.body.forEach { visitLabelStmts(it, out) }
             is IfStmt -> {
+                visitLabelExpr(s.cond, out)
                 s.then.forEach { visitLabelStmts(it, out) }
                 s.otherwise.forEach { visitLabelStmts(it, out) }
             }
-            is WhileStmt -> s.body.forEach { visitLabelStmts(it, out) }
-            is WhenStmt -> s.entries.forEach { it.body.forEach { visitLabelStmts(it, out) } }
+            is WhileStmt -> {
+                visitLabelExpr(s.cond, out)
+                s.body.forEach { visitLabelStmts(it, out) }
+            }
+            is WhenStmt -> {
+                s.subject?.let { visitLabelExpr(it, out) }
+                s.entries.forEach { entry ->
+                    entry.conditions.forEach { visitLabelExpr(it, out) }
+                    entry.body.forEach { visitLabelStmts(it, out) }
+                }
+            }
             is ExprStmt -> visitLabelExpr(s.expr, out)
             is ReturnStmt -> s.value?.let { visitLabelExpr(it, out) }
             else -> Unit
@@ -480,10 +491,36 @@ class TypeChecker {
     private fun visitLabelExpr(e: Expr, out: MutableSet<String>) {
         when (e) {
             is IfExpr -> {
+                visitLabelExpr(e.cond, out)
                 e.then.forEach { visitLabelStmts(it, out) }
                 e.otherwise.forEach { visitLabelStmts(it, out) }
             }
-            is WhenExpr -> e.entries.forEach { it.body.forEach { visitLabelStmts(it, out) } }
+            is WhenExpr -> {
+                e.subject?.let { visitLabelExpr(it, out) }
+                e.entries.forEach { entry ->
+                    entry.conditions.forEach { visitLabelExpr(it, out) }
+                    entry.body.forEach { visitLabelStmts(it, out) }
+                }
+            }
+            is UnaryOp -> visitLabelExpr(e.operand, out)
+            is BinaryOp -> {
+                visitLabelExpr(e.left, out)
+                visitLabelExpr(e.right, out)
+            }
+            is Call -> {
+                visitLabelExpr(e.callee, out)
+                e.args.forEach { visitLabelExpr(it, out) }
+            }
+            is Assign -> {
+                visitLabelExpr(e.target, out)
+                visitLabelExpr(e.value, out)
+            }
+            is ArrayAccess -> {
+                visitLabelExpr(e.array, out)
+                visitLabelExpr(e.index, out)
+            }
+            is Convert -> visitLabelExpr(e.value, out)
+            is ArrayLiteral -> e.elements.forEach { visitLabelExpr(it, out) }
             else -> Unit
         }
     }

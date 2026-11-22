@@ -541,7 +541,7 @@ class ExprEmitter(
         if (elseL != null) {
             stmt.openReserved(elseL)
             val v2 = stmt.emitValue(e.otherwise)
-        val elseBlock = if (v2 != null) b.block() else ""
+            val elseBlock = if (v2 != null) b.block() else ""
             stmt.ensureTerminatedOr(endL)
             stmt.openReserved(endL)
             // A null side means that branch leaves through a terminator (a

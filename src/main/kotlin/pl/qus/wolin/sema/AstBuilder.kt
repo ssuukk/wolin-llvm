@@ -156,10 +156,15 @@ class AstBuilder {
             val expression = ctx.blockLevelExpression()?.expression()
             if (expression != null) {
                 if (label == "return@") {
-                    val address = (buildExpression(expression) as? IntLit)?.value
-                        ?: unsupported("return@<label>")
-                    returnAtSink?.add(ReturnAt(address.toInt()))
-                    return listOf(ReturnAtStmt(ReturnAtAddress(address.toInt())))
+                    // The address form only when the operand is an integer
+                    // literal; otherwise `return@` is the label named `return`.
+                    val stmt = buildStatementExpr(expression)
+                    val address = ((stmt as? ExprStmt)?.expr as? IntLit)?.value
+                    if (address != null) {
+                        returnAtSink?.add(ReturnAt(address.toInt()))
+                        return listOf(ReturnAtStmt(ReturnAtAddress(address.toInt())))
+                    }
+                    return listOf(LabelStmt("return"), stmt)
                 }
                 return listOf(LabelStmt(label.removeSuffix("@")), buildStatementExpr(expression))
             }

@@ -77,4 +77,11 @@ class LabelGrammarTest {
         assertEquals(Ast.LabelStmt("hold"), body[0])
         assertTrue(body[1] is Ast.ReturnStmt, "the return must follow the label, got: ${body[1]}")
     }
+
+    @Test fun `a label named return before a loop builds`() {
+        val program = build("fun f() { return@\n    while (true) {} }")
+        val body = program.functions[0].body
+        assertEquals(Ast.LabelStmt("return"), body[0])
+        assertTrue(body[1] is Ast.WhileStmt, "the loop must follow the label, got: ${body[1]}")
+    }
 }

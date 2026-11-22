@@ -51,6 +51,17 @@ class LabelTest {
         check("fun f() { var x: ubyte = if (true) { y@; 5 } else { 3 } }")
     }
 
+    @Test fun `a label in an expression branch resolves`() {
+        check("fun f() { var x: ubyte = if (true) { y@; 5 } else { 3 }; break@y }")
+    }
+
+    @Test fun `a duplicate label in an expression branch is rejected`() {
+        assertRejected(
+            "fun f() { var x: ubyte = if (true) { a@; 5 } else { 3 }; a@ }",
+            "Label a already defined",
+        )
+    }
+
     @Test fun `an outer label stays visible after a function literal`() {
         check("fun f() { x@; val g: (ubyte, ubyte) -> ubyte = { a, b -> 0 }; break@x }")
     }

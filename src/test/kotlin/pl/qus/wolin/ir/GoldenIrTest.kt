@@ -326,14 +326,39 @@ class GoldenIrTest {
 
     @Test fun `a branch leaving through a labelled jump has no value`() {
         val src = """
-            fun f() {
-                var u: unit = if (true) { break@p } else { }
+            fun f(): ubyte {
+                return if (true) { break@p; 1 } else { 3 }
                 p@
-                while (true) {}
+                return 9
             }
         """.trimIndent()
         val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("ret i8 3"), "the live branch's value is used:\n$ir")
         assertFalse(ir.contains("phi"), "the jumping branch must not contribute a phi incoming:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `a label in a declaration initialiser resolves`() {
+        val src = """
+            fun f(): ubyte {
+                var x: ubyte = if (true) { y@; 5 } else { 3 }
+                return x
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^y:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the label's block is missing:\n$ir")
+        assertTrue(ir.contains("[ 5, %y ]"), "the phi must name the label's block:\n$ir")
+        assertTargetsDefined(ir)
+    }
+
+    @Test fun `a trailing label in an expression branch opens its block`() {
+        val src = """
+            fun f(): unit {
+                return if (true) { break@p; p@ } else { }
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(Regex("^p:\\s*$", RegexOption.MULTILINE).containsMatchIn(ir), "the trailing label's block is missing:\n$ir")
         assertTargetsDefined(ir)
     }
 }
