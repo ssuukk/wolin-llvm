@@ -1,0 +1,28 @@
+// interpolation.wtk — string templates on the C64.
+//
+// Build:
+//   wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk \
+//       examples/interpolation.wtk -o interpolation.prg
+
+package demo.interpolation
+
+import wolin.println
+
+fun main() {
+    var n: ubyte = 42
+    var signed: byte = -7
+    var w: word = -1234
+    var ok: bool = true
+    var f: float = 3.1415927
+    var name: string = "WOLIN"
+
+    println("n=${n}")
+    println("signed=${signed}")
+    println("word=${w}")
+    println("ok=${ok}")
+    println("float=${f}")
+    println("name=${name}")
+    println("mixed: ${n} ${ok} ${f}")
+
+    while (true) {}
+}
