@@ -1,5 +1,9 @@
 # String interpolation — implementation plan (first cut)
 
+Status: implemented (first cut). The ledger is
+`.superpowers/sdd/2026-11-22-string-interpolation/progress.md`; the step
+checkboxes below are the original plan, not a post-hoc status report.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement `${expr}` and `$name` in string literals for `ubyte`, `byte`, `uword`, `word`, `bool`, `string` and `float`, with no heap: one static 256-byte buffer per template site, 255-byte result cap, type-directed formatting, and a self-contained float formatter.
@@ -465,7 +469,9 @@ In `StringInterpTest`, using the same `$3000` copy-out harness:
 - `1e-4f` → `1.0E-4`
 - `1e-5f` → `1.0E-5`
 - `1e-20f` → `1.0E-20`
-- `9.999999f` → `10.0` (carry across the digit boundary, still 7 digits)
+- `2.9999997f` → `3.0` (carry through the fractional digits)
+- `9.9999997f` → `10.0` (carry out of the leading digit; exponent increments)
+- `9.999999f` → `9.999999` (the stored float's 8th digit is below 5)
 - `0.1f` → `0.1`
 - NaN from `0.0f / 0.0f` → `NaN`
 - `1.0f / 0.0f` → `Infinity`, negative → `-Infinity`, `-0.0f` → `-0.0`

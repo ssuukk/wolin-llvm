@@ -3,6 +3,13 @@
 Date: 2026-11-22. Status: implemented (first cut); plan in
 `docs/superpowers/plans/2026-11-22-string-interpolation.md`.
 
+Implementation deviations: soft-float normalisation treats a mantissa in
+`[0.9999999, 1.0)` as exactly `1.0` (otherwise `1e-4` printed as
+`9.999999E-5`); `9.999999f` prints `9.999999` because its stored 8th digit
+is below 5; and the VICE test settle time was raised from 2.5 s to 4 s for
+suite stability. Float interpolation remains a 7-significant-digit
+formatter, not Kotlin's shortest round-trip.
+
 ## Intent
 
 `TODO.md` lists string interpolation (`${...}`) as a v2 item. The parser

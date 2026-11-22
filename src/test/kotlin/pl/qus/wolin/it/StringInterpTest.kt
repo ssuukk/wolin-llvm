@@ -59,6 +59,7 @@ class StringInterpTest {
                 var w: uword = 65535
                 var sw: word = -32768
                 var ok: bool = true
+                var nope: bool = false
                 var s: string = "hi"
                 copyAt("u=${'$'}{n}", 0)
                 copyAt("b=${'$'}{sb}", 16)
@@ -66,6 +67,7 @@ class StringInterpTest {
                 copyAt("d=${'$'}{sw}", 48)
                 copyAt("q=${'$'}{ok}", 64)
                 copyAt("s=${'$'}{s}", 80)
+                copyAt("n=${'$'}{nope}", 96)
                 while (true) {}
             }
             """.trimIndent(),
@@ -78,6 +80,7 @@ class StringInterpTest {
         assertText(memory, 48, "D=-32768")
         assertText(memory, 64, "Q=TRUE")
         assertText(memory, 80, "S=HI")
+        assertText(memory, 96, "N=FALSE")
     }
 
     @Test fun `a runtime string is capped at 255 bytes`() {
@@ -106,6 +109,29 @@ class StringInterpTest {
             assertEquals(0x41, memory[i].toInt() and 0xFF, "byte $i")
         }
         assertEquals(0, memory[255].toInt() and 0xFF)
+    }
+
+    @Test fun `a nested template uses its own buffer`() {
+        val memory = runProgramRange(
+            """
+            var out: ubyte[ubyte]^0xC000
+
+            fun main() {
+                var n: ubyte = 7
+                var s: string = "a=${'$'}{"b=${'$'}{n}"}c"
+                var i: ubyte = 0
+                while (true) {
+                    out[i] = s[i]
+                    if (s[i] == 0) break
+                    i++
+                }
+                while (true) {}
+            }
+            """.trimIndent(),
+            0xC000,
+            0xC00F,
+        )
+        assertText(memory, 0, "A=B=7C")
     }
 
     @Test fun `float parts use the documented notation`() {
@@ -139,6 +165,8 @@ class StringInterpTest {
                 var inf: float = a / z
                 var ninf: float = z - inf
                 var nz: float = z / (1.0 - 2.0)
+                var m: float = 2.9999997
+                var p: float = 9.9999997
                 copyAt("a=${'$'}{a}", 0)
                 copyAt("b=${'$'}{b}", 16)
                 copyAt("c=${'$'}{c}", 32)
@@ -154,12 +182,14 @@ class StringInterpTest {
                 copyAt("inf=${'$'}{inf}", 192)
                 copyAt("ninf=${'$'}{ninf}", 208)
                 copyAt("nz=${'$'}{nz}", 224)
+                copyAt("m=${'$'}{m}", 240)
+                copyAt("p=${'$'}{p}", 248)
                 while (true) {}
             }
             """.trimIndent(),
             0x6000,
             0x60FF,
-            8_000L,
+            12_000L,
         )
         assertSourceText(memory, 0, "a=1.5")
         assertSourceText(memory, 16, "b=-2.25")
@@ -176,6 +206,37 @@ class StringInterpTest {
         assertSourceText(memory, 192, "inf=Infinity")
         assertSourceText(memory, 208, "ninf=-Infinity")
         assertSourceText(memory, 224, "nz=-0.0")
+        assertSourceText(memory, 240, "m=3.0")
+        assertSourceText(memory, 248, "p=10.0")
+    }
+
+    @Test fun `a float at the cap leaves the sign and stops`() {
+        val long = "a".repeat(254)
+        val memory = runProgramRange(
+            """
+            var out: ubyte[ubyte]^0x6000
+
+            fun main() {
+                var long: string = "$long"
+                var f: float = 1.0 - 3.25
+                var s: string = "${'$'}{long}${'$'}{f}"
+                var i: ubyte = 0
+                while (true) {
+                    out[i] = s[i]
+                    if (s[i] == 0) break
+                    i++
+                }
+                while (true) {}
+            }
+            """.trimIndent(),
+            0x6000,
+            0x60FF,
+        )
+        for (i in 0 until 254) {
+            assertEquals(0x41, memory[i].toInt() and 0xFF, "byte $i")
+        }
+        assertEquals(0x2D, memory[254].toInt() and 0xFF, "the sign is written at the cap")
+        assertEquals(0, memory[255].toInt() and 0xFF)
     }
 
     @Test fun `re-evaluating one site overwrites its previous result`() {

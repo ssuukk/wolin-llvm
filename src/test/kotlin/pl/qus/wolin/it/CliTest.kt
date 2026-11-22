@@ -7,6 +7,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -47,6 +48,25 @@ class CliTest {
         assertEquals(0, rc, errOutput)
         assertTrue(prg.exists(), "the .prg must be written")
         assertTrue(Files.size(prg) > 0, "the .prg must not be empty")
+    }
+
+    @Test fun `a float interpolation program compiles and links without printf`() {
+        val dir = tempDir()
+        val src = dir.resolve("t.wtk")
+        src.writeText(
+            """
+            fun main() {
+                var f: float = 1.5
+                var s: string = "f=${'$'}{f}"
+                while (true) {}
+            }
+            """.trimIndent(),
+        )
+        val prg = dir.resolve("t.prg")
+        val rc = runCli(listOf("-o", prg.toString(), src.toString()))
+        assertEquals(0, rc, errOutput)
+        assertTrue(prg.exists(), "the .prg must be written")
+        assertFalse(dir.resolve("t.prg.map").readText().contains("printf"))
     }
 
     @Test fun `no input file is an error`() {
