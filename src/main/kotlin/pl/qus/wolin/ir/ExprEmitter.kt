@@ -14,12 +14,16 @@ import pl.qus.wolin.ast.CharLit
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FunctionLit
 import pl.qus.wolin.ast.GlobalDecl
+import pl.qus.wolin.ast.FunDecl
 import pl.qus.wolin.ast.IfExpr
 import pl.qus.wolin.ast.IntLit
+import pl.qus.wolin.ast.MemberAccess
 import pl.qus.wolin.ast.NullLit
 import pl.qus.wolin.ast.RealLit
 import pl.qus.wolin.ast.StringLit
 import pl.qus.wolin.ast.StringTemplate
+import pl.qus.wolin.ast.StructDecl
+import pl.qus.wolin.ast.ThisRef
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
 import pl.qus.wolin.ast.WhenEntry
@@ -88,6 +92,16 @@ internal fun llvmEscapeByte(c: Int): String = when {
     else -> "\\${"%02x".format(c)}"
 }
 
+/** The mangled name of an impl method: `<file>.<struct>.<method>`. */
+internal fun methodSymbol(prefix: String, decl: FunDecl): String =
+    listOfNotNull(prefix.ifEmpty { null }, decl.owner, decl.name).joinToString(".")
+
+/** The mangled name of the static vtable for `impl Struct : Trait`. */
+internal fun vtableSymbol(prefix: String, structName: String, traitName: String): String =
+    listOf("vt", prefix, structName, traitName)
+        .filter { it.isNotEmpty() }
+        .joinToString(".")
+
 /**
  * Emits expressions into the current function of [b].
  *
@@ -105,6 +119,10 @@ class ExprEmitter(
     private val resolved: Map<VarRef, Symbol>,
     /** The file's globals, so a function literal can see them. */
     private val globals: List<GlobalDecl> = emptyList(),
+    /** The program's struct declarations, for layouts and field offsets. */
+    private val structs: List<StructDecl> = emptyList(),
+    /** The program's static vtables, for trait-to-struct coercions. */
+    private val vtables: List<Ast.VTableInfo> = emptyList(),
 ) {
     private val floatConsts = LinkedHashMap<String, String>()
     private val stringConsts = LinkedHashMap<String, String>()
@@ -126,10 +144,12 @@ class ExprEmitter(
         is StringLit -> emitStringLit(e)
         is StringTemplate -> emitStringTemplate(e)
         is VarRef -> emitVarRef(e)
+        is ThisRef -> throw error("this is not a value; access a field or call a method")
         is UnaryOp -> emitUnary(e)
         is BinaryOp -> emitBinary(e)
         is Assign -> emitAssign(e)
         is ArrayAccess -> emitArrayAccess(e)
+        is MemberAccess -> emitMemberAccess(e)
         is ArrayLiteral -> throw error("Array literal cannot be evaluated as an expression")
         is Call -> emitCall(e)
         is IfExpr -> emitIfExpr(e)
@@ -286,12 +306,16 @@ class ExprEmitter(
     // ---- variables --------------------------------------------------------
 
     private fun emitVarRef(e: VarRef): IrValue {
+        if (e.type.kind == TypeKind.STRUCT) {
+            throw error("A struct value is not first class")
+        }
         (resolved[e] as? Symbol.FunSymbol)?.let { symbol ->
             // A function name used as a value is its address, as a `uword`.
             return b.instr(IrType.I16, "ptrtoint i8* @\"${symbol.prefix}.${symbol.decl.name}\" to i16")
         }
         val ty = TypeMapper.ir(e.type)
-        val addressed = e.type.kind == TypeKind.ARRAY || e.type.kind == TypeKind.STRING
+        val addressed = e.type.kind == TypeKind.ARRAY || e.type.kind == TypeKind.STRING ||
+            e.type.kind == TypeKind.TRAIT
         return when (val s = stmt.vars.lookup(e.name) ?: throw error("Unresolved variable ${e.name}")) {
             is VarStorage.Param -> s.value
             is VarStorage.Global -> when {
@@ -306,10 +330,13 @@ class ExprEmitter(
                 addressed -> s.ptr
                 else -> b.instr(ty, "load ${ty.llvmName()}, ptr ${s.ptr.name}")
             }
-            is VarStorage.Fixed -> {
-                val element = if (addressed) IrType.I8 else ty
-                val ptr = fixedPtr(s.address, element)
-                if (addressed) ptr else b.instr(ty, "load ${ty.llvmName()}, ptr ${ptr.name}")
+            is VarStorage.Fixed -> when {
+                // A fixed-address array is the data address itself; a string
+                // is a pointer variable at the address, so its read loads
+                // the pointer exactly like a global or local string.
+                e.type.kind == TypeKind.ARRAY || e.type.kind == TypeKind.TRAIT ->
+                    fixedPtr(s.address, IrType.I8)
+                else -> loadVar(s, ty)
             }
             is VarStorage.CpuFlag -> CpuAccessors.flagRead(b, s.reg)
         }
@@ -370,6 +397,16 @@ class ExprEmitter(
             val t = loadVar(s, ty)
             val r = b.instr(ty, "$op ${ty.llvmName()} ${t.name}, ${abs(delta)}")
             storeVar(s, r, ty)
+            return if (e.prefix) r else t
+        }
+        if (operand is MemberAccess) {
+            val field = memberField(operand)
+            val fty = TypeMapper.ir(field.type)
+            val p = memberAddress(operand)
+            val vol = if (isFixedStorage(operand.receiver)) "volatile " else ""
+            val t = b.instr(fty, "load $vol${fty.llvmName()}, ptr ${p.name}")
+            val r = b.instr(fty, "$op ${fty.llvmName()} ${t.name}, ${abs(delta)}")
+            b.instr(IrType.Void, "store $vol${fty.llvmName()} ${r.name}, ptr ${p.name}")
             return if (e.prefix) r else t
         }
         val v = emit(operand)
@@ -465,11 +502,22 @@ class ExprEmitter(
     private fun emitAssign(a: Assign): IrValue {
         return when (val target = a.target) {
             is VarRef -> {
+                if (a.type.kind == TypeKind.TRAIT) {
+                    check(a.op == "=") { "compound assignment is not defined for a trait value" }
+                    val storage = stmt.vars.lookup(target.name)
+                        ?: throw error("Unresolved variable ${target.name}")
+                    require(storage !is VarStorage.Param) {
+                        "Cannot assign to parameter ${target.name}"
+                    }
+                    val cell = traitCell(target)
+                    storeTraitRef(cell, a.type, a.value)
+                    return cell
+                }
                 val s = stmt.vars.lookup(target.name)
                     ?: throw error("Unresolved variable ${target.name}")
                 require(s !is VarStorage.Param) { "Cannot assign to parameter ${target.name}" }
                 val ty = TypeMapper.ir(a.type)
-                val v = widenIfNeeded(emit(a.value), a)
+                val v = fitTargetWidth(emit(a.value), a)
                 if (a.op == "=") {
                     storeVar(s, v, ty)
                     return v
@@ -481,11 +529,17 @@ class ExprEmitter(
             }
 
             is ArrayAccess -> {
+                if (a.type.kind == TypeKind.TRAIT) {
+                    check(a.op == "=") { "compound assignment is not defined for a trait value" }
+                    val cell = traitElementPtr(target)
+                    storeTraitRef(cell, a.type, a.value)
+                    return cell
+                }
                 val ety = TypeMapper.ir(a.type)
                 val base = emitArrayBase(target.array)
                 val idx = promoteIndex(emit(target.index), target.index.type)
                 val p = b.instr(IrType.Ptr, "getelementptr ${ety.llvmName()}, ptr ${base.name}, i16 ${idx.name}")
-                val v = widenIfNeeded(emit(a.value), a)
+                val v = fitTargetWidth(emit(a.value), a)
                 if (a.op == "=") {
                     b.instr(IrType.Void, "store ${ety.llvmName()} ${v.name}, ptr ${p.name}")
                     return v
@@ -493,6 +547,22 @@ class ExprEmitter(
                 val t = b.instr(ety, "load ${ety.llvmName()}, ptr ${p.name}")
                 val r = compoundResult(a, t, v)
                 b.instr(IrType.Void, "store ${ety.llvmName()} ${r.name}, ptr ${p.name}")
+                r
+            }
+
+            is MemberAccess -> {
+                val field = memberField(target)
+                val ty = TypeMapper.ir(field.type)
+                val p = memberAddress(target)
+                val vol = if (isFixedStorage(target.receiver)) "volatile " else ""
+                val v = fitTargetWidth(emit(a.value), a)
+                if (a.op == "=") {
+                    b.instr(IrType.Void, "store $vol${ty.llvmName()} ${v.name}, ptr ${p.name}")
+                    return v
+                }
+                val t = b.instr(ty, "load $vol${ty.llvmName()}, ptr ${p.name}")
+                val r = compoundResult(a, t, v)
+                b.instr(IrType.Void, "store $vol${ty.llvmName()} ${r.name}, ptr ${p.name}")
                 r
             }
 
@@ -530,15 +600,19 @@ class ExprEmitter(
     private fun allBits(ty: IrType): String = if (ty == IrType.I16) "65535" else "-1"
 
     /**
-     * The bit-assignment operators accept a mask narrower than the target;
-     * the checker only guarantees that it fits the width, so extend it to the
-     * target's type.
+     * A bit-assignment mask may differ from the target's width: a narrower
+     * mask is extended (signedly or unsignedly, by its own type), and a wider
+     * one is truncated to the target's low bits. Any other assignment is
+     * type-checked to the same width, so it never reaches this conversion.
      */
-    private fun widenIfNeeded(value: IrValue, a: Assign): IrValue {
+    private fun fitTargetWidth(value: IrValue, a: Assign): IrValue {
         if (!a.value.type.isInteger || !a.type.isInteger) return value
         val vty = TypeMapper.ir(a.value.type)
         val tty = TypeMapper.ir(a.type)
         if (vty == tty) return value
+        if (vty == IrType.I16 && tty == IrType.I8) {
+            return b.instr(IrType.I8, "trunc i16 ${value.name} to i8")
+        }
         val dir = if (isUnsigned(a.value.type)) "zext" else "sext"
         return b.instr(tty, "$dir ${vty.llvmName()} ${value.name} to ${tty.llvmName()}")
     }
@@ -552,7 +626,148 @@ class ExprEmitter(
 
     // ---- arrays -------------------------------------------------------------
 
+    // ---- structs ------------------------------------------------------------
+
+    /** The base pointer of a struct instance or array element. */
+    private fun structBase(expr: Expr): IrValue = when (expr) {
+        is VarRef -> {
+            when (val storage = stmt.vars.lookup(expr.name)
+                ?: throw error("Unresolved variable ${expr.name}")) {
+                is VarStorage.Global -> IrValue("@${storage.name}", IrType.Ptr)
+                is VarStorage.Local -> storage.ptr
+                is VarStorage.Fixed -> fixedPtr(storage.address, IrType.I8)
+                else -> throw error("Unsupported struct storage for ${expr.name}")
+            }
+        }
+        is ArrayAccess -> structElementPtr(expr)
+        is ThisRef -> stmt.thisValue ?: throw error("this outside an impl method")
+        else -> throw error("Unsupported struct receiver")
+    }
+
+    /** The address of a struct array element. */
+    private fun structElementPtr(a: ArrayAccess): IrValue {
+        val owner = structOf(a.type)
+        val base = emitArrayBase(a.array)
+        val idx = promoteIndex(emit(a.index), a.index.type)
+        val element = IrType.Array(IrType.I8, owner.size).llvmName()
+        return b.instr(
+            IrType.Ptr,
+            "getelementptr $element, ptr ${base.name}, i16 ${idx.name}",
+        )
+    }
+
+    /** The address of a 4-byte trait cell inside a trait array. */
+    private fun traitElementPtr(a: ArrayAccess): IrValue {
+        val base = emitArrayBase(a.array)
+        val idx = promoteIndex(emit(a.index), a.index.type)
+        val element = IrType.Array(IrType.I8, 4).llvmName()
+        return b.instr(
+            IrType.Ptr,
+            "getelementptr $element, ptr ${base.name}, i16 ${idx.name}",
+        )
+    }
+
+    /** The address of a trait value's 4-byte cell. */
+    private fun traitCell(expr: Expr): IrValue {
+        require(expr.type.kind == TypeKind.TRAIT) { "not a trait value: $expr" }
+        return emit(expr)
+    }
+
+    /** The vtable symbol for the concrete [structName] as [traitName]. */
+    private fun vtableFor(structName: String, traitName: String): String {
+        val info = vtables.firstOrNull {
+            it.structName == structName && it.traitName == traitName
+        } ?: error("No vtable for $structName as $traitName")
+        return vtableSymbol(info.prefix, info.structName, info.traitName)
+    }
+
+    /**
+     * Stores a trait reference into [cell]. A struct value contributes its
+     * address plus the vtable of `(struct, trait)`; another trait value
+     * contributes a copy of its data and vtable pointers.
+     */
+    internal fun storeTraitRef(cell: IrValue, targetType: WolinType, value: Expr) {
+        when (value.type.kind) {
+            TypeKind.TRAIT -> {
+                val src = traitCell(value)
+                val data = b.instr(IrType.Ptr, "load ptr, ptr ${src.name}")
+                val srcVtSlot = b.instr(
+                    IrType.Ptr,
+                    "getelementptr i8, ptr ${src.name}, i16 2",
+                )
+                val vt = b.instr(IrType.Ptr, "load ptr, ptr ${srcVtSlot.name}")
+                b.instr(IrType.Void, "store ptr ${data.name}, ptr ${cell.name}")
+                val dstVtSlot = b.instr(
+                    IrType.Ptr,
+                    "getelementptr i8, ptr ${cell.name}, i16 2",
+                )
+                b.instr(IrType.Void, "store ptr ${vt.name}, ptr ${dstVtSlot.name}")
+            }
+            TypeKind.STRUCT -> {
+                val data = structBase(value)
+                val structName = value.type.structName
+                    ?: error("Struct value has no name")
+                val traitName = targetType.traitName
+                    ?: error("Trait type has no name")
+                val symbol = vtableFor(structName, traitName)
+                b.instr(IrType.Void, "store ptr ${data.name}, ptr ${cell.name}")
+                val dstVtSlot = b.instr(
+                    IrType.Ptr,
+                    "getelementptr i8, ptr ${cell.name}, i16 2",
+                )
+                b.instr(IrType.Void, "store ptr @\"$symbol\", ptr ${dstVtSlot.name}")
+            }
+            else -> error("Value of type ${value.type} is not a trait reference")
+        }
+    }
+
+    /** The address of a field inside a struct. */
+    private fun memberAddress(e: MemberAccess): IrValue {
+        val owner = e.owner ?: throw error("Member access has no owner")
+        val offset = owner.fieldOffsets[e.name]
+            ?: throw error("Unknown field ${e.name} in ${owner.name}")
+        val base = structBase(e.receiver)
+        return b.instr(IrType.Ptr, "getelementptr i8, ptr ${base.name}, i16 $offset")
+    }
+
+    private fun memberField(e: MemberAccess): GlobalDecl {
+        val owner = e.owner ?: throw error("Member access has no owner")
+        return owner.fields.firstOrNull { it.name == e.name }
+            ?: throw error("Unknown field ${e.name} in ${owner.name}")
+    }
+
+    /** A field of a fixed-address struct is a hardware register: volatile. */
+    private fun isFixedStorage(expr: Expr): Boolean = when (expr) {
+        is VarRef -> stmt.vars.lookup(expr.name) is VarStorage.Fixed
+        is ArrayAccess -> isFixedStorage(expr.array)
+        // A method is shared by every instance, so it cannot know whether
+        // its receiver is a fixed-address struct. Treat `this` as volatile:
+        // a hardware field stays a hardware access, at the cost of the
+        // optimiser treating ordinary struct fields conservatively too.
+        is ThisRef -> true
+        else -> false
+    }
+
+    private fun emitMemberAccess(e: MemberAccess): IrValue {
+        val field = memberField(e)
+        val ty = TypeMapper.ir(field.type)
+        val p = memberAddress(e)
+        val vol = if (isFixedStorage(e.receiver)) "volatile " else ""
+        return b.instr(ty, "load $vol${ty.llvmName()}, ptr ${p.name}")
+    }
+
+    private fun structOf(type: WolinType): StructDecl {
+        val name = type.structName ?: throw error("Struct type $type has no name")
+        return structs.firstOrNull { it.name == name } ?: throw error("Unknown struct $name")
+    }
+
     private fun emitArrayAccess(a: ArrayAccess): IrValue {
+        if (a.type.kind == TypeKind.STRUCT) {
+            throw error("A struct element is not a value; read a field")
+        }
+        if (a.type.kind == TypeKind.TRAIT) {
+            return traitElementPtr(a)
+        }
         val ety = TypeMapper.ir(a.type)
         val base = emitArrayBase(a.array)
         val idx = promoteIndex(emit(a.index), a.index.type)
@@ -607,6 +822,31 @@ class ExprEmitter(
     }
 
     private fun emitCall(e: Call): IrValue {
+        if (e.traitSlot >= 0) {
+            val member = e.callee as? MemberAccess
+                ?: throw error("Trait call without a receiver")
+            val cell = traitCell(member.receiver)
+            val data = b.instr(IrType.Ptr, "load ptr, ptr ${cell.name}")
+            val vtSlot = b.instr(
+                IrType.Ptr,
+                "getelementptr i8, ptr ${cell.name}, i16 2",
+            )
+            val vtable = b.instr(IrType.Ptr, "load ptr, ptr ${vtSlot.name}")
+            val entry = b.instr(
+                IrType.Ptr,
+                "getelementptr i8, ptr ${vtable.name}, i16 ${e.traitSlot * 2}",
+            )
+            val fn = b.instr(IrType.Ptr, "load ptr, ptr ${entry.name}")
+            val args = listOf(data) + e.args.map { emit(it) }
+            return b.call(TypeMapper.ir(e.type), fn.name, args)
+        }
+        val method = e.resolvedMethod
+        if (method != null) {
+            val member = e.callee as? MemberAccess ?: throw error("Method call without a receiver")
+            val self = structBase(member.receiver)
+            val args = listOf(self) + e.args.map { emit(it) }
+            return b.call(TypeMapper.ir(e.type), methodSymbol(e.methodPrefix, method), args)
+        }
         val callee = e.callee as? VarRef ?: throw error("Unsupported call target")
         val args = e.args.map { emit(it) }
         val retType = TypeMapper.ir(e.type)

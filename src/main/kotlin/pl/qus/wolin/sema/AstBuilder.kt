@@ -27,6 +27,9 @@ class AstBuilder {
         val imports = mutableListOf<ImportDecl>()
         val globals = mutableListOf<GlobalDecl>()
         val functions = mutableListOf<FunDecl>()
+        val structs = mutableListOf<StructDecl>()
+        val traits = mutableListOf<TraitDecl>()
+        val impls = mutableListOf<ImplDecl>()
 
         file.preamble()?.importList()?.importHeader()?.forEach { header ->
             imports += ImportDecl(importPath(header), header.importAlias()?.simpleIdentifier()?.text)
@@ -35,6 +38,9 @@ class AstBuilder {
         file.topLevelObject().forEach { top ->
             top.propertyDeclaration()?.let { globals += buildGlobal(it); return@forEach }
             top.functionDeclaration()?.let { functions += buildFunction(it); return@forEach }
+            top.structDeclaration()?.let { structs += buildStruct(it); return@forEach }
+            top.traitDeclaration()?.let { traits += buildTrait(it); return@forEach }
+            top.implDeclaration()?.let { impls += buildImpl(it); return@forEach }
             top.classDeclaration()?.let {
                 unsupported("class ${it.simpleIdentifier()?.text ?: ""}")
             }
@@ -43,7 +49,14 @@ class AstBuilder {
             unsupported("declaration")
         }
 
-        return Program(globals, functions, imports)
+        return Program(
+            globals = globals,
+            functions = functions,
+            structs = structs,
+            traits = traits,
+            impls = impls,
+            imports = imports,
+        )
     }
 
     // ---- declarations -----------------------------------------------------
@@ -60,6 +73,36 @@ class AstBuilder {
             location = info?.location,
             isVal = ctx.VAL() != null,
             declaredType = info?.type,
+            line = ctx.start.line,
+        )
+    }
+
+    private fun buildStruct(ctx: KotlinParser.StructDeclarationContext): StructDecl =
+        StructDecl(
+            name = ctx.simpleIdentifier().text,
+            fields = ctx.structBody().propertyDeclaration().map { buildGlobal(it) },
+        )
+
+    private fun buildTrait(ctx: KotlinParser.TraitDeclarationContext): TraitDecl =
+        TraitDecl(
+            name = ctx.simpleIdentifier().text,
+            methods = ctx.traitBody().functionDeclaration().map { function ->
+                buildFunction(function).copy(
+                    isAbstract = function.functionBody() == null,
+                    traitName = ctx.simpleIdentifier().text,
+                )
+            },
+            line = ctx.start.line,
+        )
+
+    private fun buildImpl(ctx: KotlinParser.ImplDeclarationContext): ImplDecl {
+        val names = ctx.simpleIdentifier()
+        return ImplDecl(
+            structName = names[0].text,
+            traitName = names.getOrNull(1)?.text,
+            methods = ctx.implBody().functionDeclaration().map { function ->
+                buildFunction(function).copy(isAbstract = function.functionBody() == null)
+            },
             line = ctx.start.line,
         )
     }
@@ -81,6 +124,7 @@ class AstBuilder {
     }
 
     private fun buildFunction(ctx: KotlinParser.FunctionDeclarationContext): FunDecl {
+        if (ctx.DOT() != null) unsupported("extension function")
         val name = ctx.identifier()?.let { qualifiedName(it) } ?: unsupported("anonymous function")
         val modifiers = ctx.modifierList()?.modifier().orEmpty()
         for (m in modifiers) {
@@ -308,8 +352,15 @@ class AstBuilder {
 
     private fun buildPostfix(ctx: KotlinParser.PostfixUnaryExpressionContext): Expr {
         if (ctx.callableReference() != null) unsupported("callable reference")
-        var result = buildAtomic(ctx.atomicExpression())
-        for (operation in ctx.postfixUnaryOperation()) {
+        return buildPostfixOps(buildAtomic(ctx.atomicExpression()), ctx.postfixUnaryOperation())
+    }
+
+    private fun buildPostfixOps(
+        initial: Expr,
+        operations: List<KotlinParser.PostfixUnaryOperationContext>,
+    ): Expr {
+        var result = initial
+        for (operation in operations) {
             result = when {
                 operation.INCR() != null -> UnaryOp("++", result, Types.unit)
                 operation.DECR() != null -> UnaryOp("--", result, Types.unit)
@@ -317,7 +368,9 @@ class AstBuilder {
                 operation.callSuffix() != null -> buildCall(result, operation.callSuffix())
                 operation.arrayAccess() != null -> buildArrayAccess(result, operation.arrayAccess())
                 operation.memberAccessOperator() != null ->
-                    buildConversion(result, operation) ?: unsupported("member access")
+                    buildConversion(result, operation)
+                        ?: buildMemberAccess(result, operation)
+                        ?: unsupported("member access")
                 else -> unsupported("postfix operator")
             }
         }
@@ -359,6 +412,24 @@ class AstBuilder {
         }
     }
 
+    /**
+     * `receiver.field`, and a call on a member (`receiver.method()`), which
+     * the checker rejects because structs have no methods. A chain of
+     * member accesses is not part of the first struct cut.
+     */
+    private fun buildMemberAccess(
+        receiver: Expr,
+        operation: KotlinParser.PostfixUnaryOperationContext,
+    ): Expr? {
+        if (operation.memberAccessOperator()?.text != ".") return null
+        val inner = operation.postfixUnaryExpression() ?: return null
+        val name = inner.atomicExpression().simpleIdentifier()?.text ?: return null
+        return buildPostfixOps(
+            MemberAccess(receiver, name, Types.unit),
+            inner.postfixUnaryOperation(),
+        )
+    }
+
     private fun buildCall(callee: Expr, ctx: KotlinParser.CallSuffixContext): Expr {
         val args = ctx.valueArguments()?.valueArgument().orEmpty().map { buildExpression(it.expression()) }
         return Call(callee, args, Types.unit)
@@ -385,7 +456,7 @@ class AstBuilder {
         }
         ctx.jumpExpression()?.let { return buildJump(it) }
         ctx.loopExpression()?.let { return buildLoop(it) }
-        ctx.thisExpression()?.let { unsupported("this expression") }
+        ctx.thisExpression()?.let { return ThisRef(Types.unit) }
         ctx.superExpression()?.let { unsupported("super expression") }
         ctx.tryExpression()?.let { unsupported("try expression") }
         ctx.objectLiteral()?.let { unsupported("object literal") }
@@ -538,7 +609,8 @@ class AstBuilder {
             base
         } else {
             val indexType = array.userType()?.let { baseType(qualifiedName(it)) } ?: Types.ubyte
-            Types.array(base, indexType)
+            val count = array.arrayLength()?.let { arrayLengthValue(it) }
+            Types.array(base, indexType, count)
         }
         val location = ctx.locationReference()?.let { buildLocation(it, type) }
         return TypeInfo(type, location)
@@ -565,7 +637,7 @@ class AstBuilder {
             "unit" -> Types.unit
             "float" -> Types.float
             "string" -> Types.string
-            else -> throw SemaException("Unknown type $name")
+            else -> Types.struct(name)
         }
     }
 
@@ -586,6 +658,12 @@ class AstBuilder {
     private fun locationAddress(ctx: KotlinParser.LocationReferenceContext): Int? {
         val literal = ctx.literalConstant() ?: return null
         return literalAddress(literal)
+    }
+
+    private fun arrayLengthValue(ctx: KotlinParser.ArrayLengthContext): Int {
+        val value = integerValue(ctx.text)
+        if (value > Int.MAX_VALUE) throw SemaException("Array length is too large")
+        return value.toInt()
     }
 
     private fun literalAddress(ctx: KotlinParser.LiteralConstantContext): Int {

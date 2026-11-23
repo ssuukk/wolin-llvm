@@ -19,6 +19,39 @@ Plan: `docs/superpowers/plans/2026-11-22-string-interpolation.md`.
 - [x] Float via a self-contained IR formatter over compiler-rt soft-float; no C library.
 - [x] Borrowed-result contract documented.
 
+### 2026-11-23 — explicit array counts and structs
+
+- [x] Explicit array lengths: `T[N]` (a `ubyte` index) and
+      `T[index, N]`. Without a length, the array keeps its index-domain
+      sizing. A length is checked against the index domain, the 64 KiB
+      address space, and a fixed base address.
+- [x] `struct` declarations with scalar `var` fields. A struct is a packed
+      byte blob; fields are read and written through `p.field` and
+      `points[i].field`. No heap, constructors, copying, or struct values as
+      arguments/returns. Methods live in `impl` blocks (see below).
+- [ ] Struct field initialisers, struct/array fields, local arrays of
+      structs without a fixed address, and nested member access.
+
+### 2026-11-23 — traits and impls
+
+- [x] `trait` declarations with method signatures and optional default
+      bodies. No state and no generics.
+- [x] `impl Type` for inherent methods and `impl Type : Trait` for trait
+      implementations. Conformance is checked at compile time; a call on a
+      concrete struct dispatches statically, with a hidden receiver pointer.
+- [x] `this` in impl methods; fields through `this` are volatile, so a
+      method works on a fixed-address hardware struct as well as on global,
+      local and array-element storage.
+- [x] Default bodies are copied per implementor and checked there; they may
+      use that struct's fields and methods.
+- [x] Dynamic traits: `Shape` is a 4-byte non-owning cell holding a data
+      pointer and a vtable pointer. Structs coerce to a trait they implement;
+      calls dispatch through a static 2-byte-per-method vtable. Trait arrays
+      and parameters work; fixed-address structs work.
+- [ ] Trait returns, trait struct fields, downcasting, generic trait bounds
+      (`fun f<T: Shape>(x: T)`), associated types/constants, supertraits, and
+      method overloading. Deliberately out of scope for now.
+
 ### 2026-11-21 — labels and labelled jumps
 
 Design: `docs/superpowers/specs/2026-11-21-labels-design.md`.
@@ -85,8 +118,9 @@ No plan yet. Each was deferred from v1 for the stated reason.
 - [ ] **Exceptions** (`try` / `catch` / `throw`) — LLVM exception handling
       does not exist on the MOS backend (no unwinder); needs a hand-written
       runtime.
-- [ ] **Classes and objects** — needs a struct layout, an object model, and a
-      dispatch decision.
+- [ ] **Classes and objects** — the packed struct layout, field
+      addressing, methods, static trait dispatch, and dynamic trait
+      dispatch now exist; the object model and constructors remain.
 - [ ] **Capturing closures** — upvalue capture; on the 6502 the most
       expensive feature in the set. Non-capturing function literals are v1.
 - [ ] **Array bounds checking and a dynamic allocator** — v1 arrays are
@@ -117,11 +151,13 @@ Moved from the "Known gaps" section below; now v2 work items:
       `word == -1` is a type error while `word == 1` compiles. Found while
       landing the conversions. Fixed: a single-sign literal operand now takes
       the other operand's type (`isContextualIntLiteral`).
-- [ ] **A bitmask literal has to fit the signed range of its operand.**
+- [x] **A bitmask literal has to fit the signed range of its operand.**
       `word & 0xFF00` is rejected ("Value out of range") because the literal
       is typed with `fits` (the signed range) rather than `fitsWidth` (the
       bit-pattern range, which the bit-assignment operators already use).
       Workaround: a negative literal (`w & -256`).
+      Fixed: `checkBinary` types a `&`/`|`/`xor` literal with `fitsWidth`
+      against the other operand, so the full width is accepted.
 - [x] **A local declared inside an `if` *expression* branch has no stack
       slot.** `var x = if (c) { var b: byte = -1; b } else { 0 }` aborts the
       compiler with `IllegalStateException: Local b has no slot`: the
@@ -131,7 +167,7 @@ Moved from the "Known gaps" section below; now v2 work items:
       found while landing the conversions.
       Fixed: the local pre-scan now visits declaration initialisers, statement
       conditions, `when` subjects/conditions, and nested expression conditions.
-- [ ] **A bit-assignment from a wider integer emits invalid IR.** `x := g`
+- [x] **A bit-assignment from a wider integer emits invalid IR.** `x := g`
       with `x: ubyte` and `g: uword` emits `zext i16 %g to i8` (and
       `sext i16 %g to i8` for a signed `word`), which LLVM rejects — a
       `zext`/`sext` may not narrow. `ExprEmitter.widenIfNeeded` picks the
@@ -141,6 +177,8 @@ Moved from the "Known gaps" section below; now v2 work items:
       conversions add one more route to it. The range check that would
       reject such a mask is `TypeChecker.maskLiteral`, which sees only a
       literal or a negated literal, so a non-literal mask skips it.
+      Fixed: the emitter's `fitTargetWidth` truncates a wider mask to the
+      target's low bits; narrower masks still extend.
 
 ## Known gaps found in the code audit (2026-11-15) — moved to v2
 

@@ -11,6 +11,8 @@ import pl.qus.wolin.ast.Program
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
 import pl.qus.wolin.sema.ConstValue
+import pl.qus.wolin.sema.Symbol
+import pl.qus.wolin.sema.TypeKind
 
 /**
  * Emits the per-file global init function, `__wolin_init_file_<mangled>`.
@@ -33,11 +35,18 @@ class GlobalInitEmitter(private val b: IrBuilder) {
         val fnName = "__wolin_init_file_$mangledName"
         b.startFunction(fnName, IrType.Void, emptyList())
         for (g in program.globals) {
+            if (g.type.kind == TypeKind.TRAIT) {
+                if (g.init != null) storeTrait(g, program, mangledName)
+                continue
+            }
             val init = g.init
             if (init == null || g.constValue == null) continue
             if (g.location is FixedAddress) continue
             // A CPU flag variable has no storage: it is the register itself.
             if (g.location is CpuRegister) continue
+            // A string global's pointer is static data, even when its folded
+            // value came from an earlier global.
+            if (g.type.kind == TypeKind.STRING) continue
             if (g.location is FixedArray) {
                 val v = g.constValue
                 if (v is ConstValue.ArrayValue && v.elements.isNotEmpty()) {
@@ -51,6 +60,73 @@ class GlobalInitEmitter(private val b: IrBuilder) {
         b.ret(null)
         b.endFunction()
         return fnName
+    }
+
+    /**
+     * A file-scope trait value initialised from a struct or from another
+     * trait value. The cell is static storage; the two pointers are stored
+     * by the init function.
+     */
+    private fun storeTrait(g: GlobalDecl, program: Program, mangledName: String) {
+        val init = g.init ?: return
+        val target = when (val loc = g.location) {
+            is FixedAddress -> b.instr(
+                IrType.Ptr,
+                "inttoptr i64 ${loc.address} to i8*",
+            )
+            else -> IrValue("@\"$mangledName.${g.name}\"", IrType.Ptr)
+        }
+        val ref = init as? VarRef
+            ?: throw IllegalArgumentException(
+                "global trait initialiser must name a variable",
+            )
+        val source = program.resolved[ref] as? Symbol.DataSymbol
+            ?: throw IllegalArgumentException("unresolved global trait initialiser")
+        val prefix = source.prefix.ifEmpty { mangledName }
+        val sourceCell = when (val loc = source.location) {
+            is FixedAddress -> b.instr(
+                IrType.Ptr,
+                "inttoptr i64 ${loc.address} to i8*",
+            )
+            else -> IrValue("@\"$prefix.${ref.name}\"", IrType.Ptr)
+        }
+        when (init.type.kind) {
+            TypeKind.STRUCT -> {
+                val structName = init.type.structName
+                    ?: throw IllegalArgumentException("struct value has no name")
+                val traitName = g.type.traitName
+                    ?: throw IllegalArgumentException("trait type has no name")
+                val vt = program.vtables.firstOrNull {
+                    it.structName == structName && it.traitName == traitName
+                } ?: throw IllegalArgumentException(
+                    "no vtable for $structName as $traitName",
+                )
+                b.instr(IrType.Void, "store ptr ${sourceCell.name}, ptr ${target.name}")
+                val slot = b.instr(
+                    IrType.Ptr,
+                    "getelementptr i8, ptr ${target.name}, i16 2",
+                )
+                val symbol = vtableSymbol(vt.prefix, vt.structName, vt.traitName)
+                b.instr(IrType.Void, "store ptr @\"$symbol\", ptr ${slot.name}")
+            }
+            TypeKind.TRAIT -> {
+                val data = b.instr(IrType.Ptr, "load ptr, ptr ${sourceCell.name}")
+                val srcSlot = b.instr(
+                    IrType.Ptr,
+                    "getelementptr i8, ptr ${sourceCell.name}, i16 2",
+                )
+                val vtable = b.instr(IrType.Ptr, "load ptr, ptr ${srcSlot.name}")
+                b.instr(IrType.Void, "store ptr ${data.name}, ptr ${target.name}")
+                val dstSlot = b.instr(
+                    IrType.Ptr,
+                    "getelementptr i8, ptr ${target.name}, i16 2",
+                )
+                b.instr(IrType.Void, "store ptr ${vtable.name}, ptr ${dstSlot.name}")
+            }
+            else -> throw IllegalArgumentException(
+                "global trait initialiser must be a struct or trait value",
+            )
+        }
     }
 
     private fun store(g: GlobalDecl, mangledName: String) {

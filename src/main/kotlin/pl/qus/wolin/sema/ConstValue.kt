@@ -37,6 +37,18 @@ sealed interface ConstValue {
     }
 
     /**
+     * A string literal's NUL-terminated bytes.
+     *
+     * A `string` global is a pointer slot, and a pointer has no constant
+     * spelling in a module's constant pool: the module emitter emits a
+     * private byte array and makes the global point at it. The value never
+     * needs a runtime store, so [spelling] is empty.
+     */
+    class StringValue(val bytes: ByteArray) : ConstValue {
+        override val spelling: String = ""
+    }
+
+    /**
      * A bare reference to a function: the function's 16-bit address, which
      * only exists after the link, so the init function computes it with a
      * `ptrtoint` at startup.
@@ -69,12 +81,13 @@ sealed interface ConstValue {
         val elements: List<ConstValue>,
         val elementType: WolinType,
         val indexType: WolinType,
+        val count: Int? = null,
     ) : ConstValue {
         override val spelling: String
             get() {
                 val ty = llvmName(elementType)
-                val domain = if (indexType.kind == TypeKind.UWORD || indexType.kind == TypeKind.WORD) 65536 else 256
-                val padded = elements + List(domain - elements.size) { zeroFor(elementType) }
+                val length = count ?: if (indexType.kind == TypeKind.UWORD || indexType.kind == TypeKind.WORD) 65536 else 256
+                val padded = elements + List(length - elements.size) { zeroFor(elementType) }
                 return "[" + padded.joinToString(", ") { "$ty ${it.spelling}" } + "]"
             }
     }

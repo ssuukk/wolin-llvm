@@ -111,6 +111,19 @@ class GoldenIrTest {
         assertTrue(ir.contains("trunc i16"), "truncation missing:\n$ir")
     }
 
+    @Test fun `a wider bit-assignment mask truncates instead of extending`() {
+        val src = """
+            fun f() {
+                var x: ubyte = 0
+                var m: uword = 1
+                x := m
+            }
+        """.trimIndent()
+        val ir = CompilerPipeline().compileToIr(src, "t.wtk")
+        assertTrue(ir.contains("trunc i16"), "the mask must be truncated:\n$ir")
+        assertFalse(ir.contains("zext i16"), "the mask must not be widened:\n$ir")
+    }
+
     @Test fun `a converted global initialiser folds to a constant`() {
         val src = """
             var b: byte = -1

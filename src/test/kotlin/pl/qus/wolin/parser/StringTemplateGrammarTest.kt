@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test
 import pl.qus.wolin.ast.Ast
 import pl.qus.wolin.driver.Diagnostics
 import pl.qus.wolin.sema.AstBuilder
+import pl.qus.wolin.sema.SemaException
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -74,6 +76,24 @@ class StringTemplateGrammarTest {
         val expr = initOf("""fun f() { val s = "a\nb" }""")
         assertTrue(expr is Ast.StringLit)
         assertEquals(listOf<Byte>(0x41, 0x0A, 0x42), (expr as Ast.StringLit).bytes.toList())
+    }
+
+    @Test fun `a unicode escape decodes four hex digits`() {
+        val expr = initOf("""fun f() { val s = "\u0041" }""")
+        assertTrue(expr is Ast.StringLit)
+        assertEquals(listOf<Byte>(0xC1.toByte()), (expr as Ast.StringLit).bytes.toList())
+    }
+
+    @Test fun `a unicode escape decodes in a triple quoted string`() {
+        val expr = initOf("fun f() { val s = \"\"\"\\u0041\"\"\" }")
+        assertTrue(expr is Ast.StringLit)
+        assertEquals(listOf<Byte>(0xC1.toByte()), (expr as Ast.StringLit).bytes.toList())
+    }
+
+    @Test fun `a unicode escape with fewer than four hex digits is rejected`() {
+        assertFailsWith<SemaException> {
+            build("""fun f() { val s = "\u12" }""")
+        }
     }
 
     @Test fun `a plain literal stays a StringLit`() {

@@ -29,7 +29,13 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
         // concurrent runs fight over the listener, and the loser then reads
         // the *other* program's memory.
         val port = freePort()
-        val process = ProcessBuilder(
+        // Run headless: x64sc is a GTK front end, so it opens a window on the
+        // tester's desktop unless it is given a virtual X server. `xvfb-run`
+        // starts one for this emulator and tears it down afterwards.
+        val command = ProcessBuilder(
+            "xvfb-run",
+            "-a",
+            "-s", "-screen 0 640x480x24",
             vicePath,
             "-default",
             "-binarymonitor",
@@ -37,7 +43,8 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
             "-limitcycles", "0",
             "-warp",
             "-autostart", prg.toString(),
-        ).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        )
+        val process = command.redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
         try {
@@ -103,8 +110,12 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
 
     /** Stops the emulator: no orphan emulators, whatever happened. */
     private fun terminate(process: Process) {
+        // `xvfb-run` is the direct child; the emulator is its descendant.
+        // Destroy the descendant first, so no window outlives the wrapper.
+        process.descendants().forEach { it.destroy() }
         process.destroy()
         if (!process.waitFor(TERMINATE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+            process.descendants().forEach { it.destroyForcibly() }
             process.destroyForcibly()
             process.waitFor(TERMINATE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
         }

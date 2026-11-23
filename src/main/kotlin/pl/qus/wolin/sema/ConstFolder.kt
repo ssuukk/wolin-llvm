@@ -17,7 +17,7 @@ import pl.qus.wolin.ast.VarRef
  * Folds a global initialiser to its compile-time [ConstValue], or returns
  * null when it is not a constant expression:
  *
- * - a literal (integer, character, real, boolean, `null`);
+ * - a literal (integer, character, real, boolean, string, `null`);
  * - a reference to a global checked earlier (its constant), or to a
  *   function (whose address the init function computes at startup);
  * - a unary or binary operation over constants, applied in the type's width
@@ -38,6 +38,7 @@ object ConstFolder {
         is RealLit -> const(expr.value)
         is BoolLit -> ConstValue.BoolValue(expr.value)
         is NullLit -> ConstValue.NullValue
+        is StringLit -> ConstValue.StringValue(expr.bytes)
         is VarRef -> when {
             functionNames.containsKey(expr.name) ->
                 ConstValue.FunctionValue(expr.name, functionNames.getValue(expr.name))
@@ -160,7 +161,7 @@ object ConstFolder {
         val ity = e.type.indexType ?: return null
         val elements = e.elements.map { fold(it, constSoFar, functionNames) ?: return null }
         if (elements.any { it is ConstValue.FunctionValue || it is ConstValue.NullValue }) return null
-        return ConstValue.ArrayValue(elements, ety, ity)
+        return ConstValue.ArrayValue(elements, ety, ity, e.type.count)
     }
 
     /** The bits of [v] masked to the width of [t]. */

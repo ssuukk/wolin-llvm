@@ -3,6 +3,7 @@ package pl.qus.wolin.sema
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FunDecl
 import pl.qus.wolin.ast.Location
+import pl.qus.wolin.ast.StructDecl
 
 /**
  * A named declaration. `DataSymbol` is a variable (global, local or parameter),
@@ -31,6 +32,9 @@ sealed class Symbol {
      * another file names the defining file's prefix, not the caller's.
      */
     data class FunSymbol(val decl: FunDecl, val prefix: String = "") : Symbol()
+
+    /** A struct type declaration. */
+    data class StructSymbol(val decl: StructDecl) : Symbol()
 }
 
 /**

@@ -21,6 +21,7 @@ import pl.qus.wolin.ast.Location
 import pl.qus.wolin.ast.Program
 import pl.qus.wolin.ast.ReturnStmt
 import pl.qus.wolin.ast.Stmt
+import pl.qus.wolin.ast.StructDecl
 import pl.qus.wolin.ast.StringTemplate
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.VarRef
@@ -32,6 +33,7 @@ import pl.qus.wolin.sema.ConstValue
 import pl.qus.wolin.sema.TypeKind
 import pl.qus.wolin.sema.Types
 import pl.qus.wolin.sema.WolinType
+import pl.qus.wolin.sema.arrayLength
 
 /**
  * Emits the whole module: the `target triple` line, the global section and
@@ -57,13 +59,21 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
     var usesFloatInterpolation = false
         private set
 
+    /** The program's struct declarations, for layouts and field offsets. */
+    private var structs: List<StructDecl> = emptyList()
+
     /** Emits [program] with names mangled as `<mangledPrefix>.<symbol>`. */
     fun emitFile(program: Program, mangledPrefix: String): String {
+        structs = program.structs
         val constants = mutableListOf<String>()
-        val stmt = StmtEmitter(b)
-        stmt.expr = ExprEmitter(b, stmt, constants, mangledPrefix, program.resolved, program.globals)
+        val stmt = StmtEmitter(b, structs)
+        stmt.expr = ExprEmitter(
+            b, stmt, constants, mangledPrefix, program.resolved, program.globals, structs,
+            program.vtables,
+        )
 
         emitGlobals(program, mangledPrefix, constants)
+        emitVtables(program, mangledPrefix, constants)
         emitForeignDeclarations(program, mangledPrefix, constants)
         emitForeignGlobals(program, mangledPrefix, constants)
 
@@ -93,6 +103,26 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             stmt.startFunction(mangledPrefix, params, program.globals, fn, program.visibleGlobals)
             b.endFunction()
         }
+        // A method is an ordinary function with a hidden receiver pointer.
+        // The receiver is the first parameter, so a call site passes the
+        // struct storage address and the body reaches its fields through it.
+        for (impl in program.impls) {
+            for (fn in impl.methods) {
+                val self = IrValue("%this", IrType.Ptr)
+                val params = listOf(self) + fn.params.map {
+                    IrValue("%${it.name}", TypeMapper.ir(it.type))
+                }
+                b.startFunction(
+                    methodSymbol(mangledPrefix, fn),
+                    TypeMapper.ir(fn.retType ?: Types.unit),
+                    params,
+                )
+                stmt.startFunction(
+                    mangledPrefix, params, program.globals, fn, program.visibleGlobals, self,
+                )
+                b.endFunction()
+            }
+        }
         // The function literals are their own functions, so they are emitted
         // after the file's functions: a module holds one function open at a
         // time.
@@ -115,8 +145,44 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
         return "target triple = \"mos-c64\"\n\n" + sections.joinToString("\n\n")
     }
 
+    /**
+     * The static vtable of every trait impl in this file, plus an external
+     * declaration for a vtable another file defines. A vtable is a plain
+     * array of code pointers; its slot order is the trait's method order,
+     * which is also the order [ImplDecl.methods] was filled in.
+     */
+    private fun emitVtables(program: Program, prefix: String, constants: MutableList<String>) {
+        for (impl in program.impls) {
+            val trait = impl.traitName ?: continue
+            val symbol = vtableSymbol(prefix, impl.structName, trait)
+            val entries = impl.methods.joinToString(", ") {
+                "ptr @\"${methodSymbol(prefix, it)}\""
+            }
+            constants +=
+                "@\"$symbol\" = constant [${impl.methods.size} x ptr] [$entries]"
+        }
+        for (vt in program.vtables) {
+            if (vt.prefix == prefix) continue
+            val symbol = vtableSymbol(vt.prefix, vt.structName, vt.traitName)
+            constants += "@\"$symbol\" = external constant [${vt.arity} x ptr]"
+        }
+    }
+
     /** The module globals: every file-scope variable without a fixed address. */
     private fun emitGlobals(program: Program, prefix: String, constants: MutableList<String>) {
+        // String literals referenced by global initialisers: one private
+        // NUL-terminated array per distinct byte sequence.
+        val stringConstants = LinkedHashMap<String, String>()
+        fun stringPointer(bytes: ByteArray): String {
+            val key = bytes.contentToString()
+            return stringConstants.getOrPut(key) {
+                val name = "@str_g_${stringConstants.size}"
+                val chars = bytes.joinToString("") { llvmEscapeByte(it.toInt() and 0xFF) }
+                constants +=
+                    "$name = private unnamed_addr constant [${bytes.size + 1} x i8] c\"$chars\\00\""
+                name
+            }
+        }
         for (g in program.globals) {
             val location = g.location
             if (location is FixedAddress || location is FixedArray) {
@@ -125,13 +191,44 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             }
             // A CPU flag variable has no storage: it is the register itself.
             if (location is CpuRegister) continue
+            // A trait value is a 4-byte cell: data pointer + vtable pointer.
+            if (g.type.kind == TypeKind.TRAIT) {
+                constants += "@\"$prefix.${g.name}\" = global [4 x i8] zeroinitializer"
+                continue
+            }
+            // A string global is a pointer slot; the pointer points at the
+            // literal's private byte array. It is fully initialised in the
+            // data section, even when the initialiser names an earlier
+            // global: the folded value is the same pointer.
+            if (g.type.kind == TypeKind.STRING) {
+                val init = (g.constValue as? ConstValue.StringValue)
+                    ?.let { stringPointer(it.bytes) } ?: "null"
+                constants += "@\"$prefix.${g.name}\" = global ptr $init"
+                continue
+            }
+            if (g.type.kind == TypeKind.STRUCT) {
+                val size = structOf(g.type).size
+                constants += "@\"$prefix.${g.name}\" = global [$size x i8] zeroinitializer"
+                continue
+            }
             if (g.type.kind == TypeKind.ARRAY) {
                 val ety = g.type.elementType ?: throw error("Array ${g.name} has no element type")
                 val count = arrayCount(g.type)
+                if (ety.kind == TypeKind.STRUCT) {
+                    val size = structOf(ety).size
+                    constants +=
+                        "@\"$prefix.${g.name}\" = global [$count x [$size x i8]] zeroinitializer"
+                    continue
+                }
                 val ty = TypeMapper.ir(ety).llvmName()
                 val body = when (val v = g.constValue) {
                     is ConstValue.ArrayValue -> if (v.elements.isNotEmpty()) v.spelling else "zeroinitializer"
                     else -> "zeroinitializer"
+                }
+                if (ety.kind == TypeKind.TRAIT) {
+                    constants +=
+                        "@\"$prefix.${g.name}\" = global [$count x [4 x i8]] zeroinitializer"
+                    continue
                 }
                 constants += "@\"$prefix.${g.name}\" = global [$count x $ty] $body"
                 continue
@@ -159,7 +256,18 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             // A CPU flag variable has no storage: it is the register itself.
             if (foreign.decl.location is CpuRegister) continue
             val name = "${foreign.prefix}.${foreign.decl.name}"
-            val ty = TypeMapper.ir(foreign.decl.type).llvmName()
+            val type = foreign.decl.type
+            val ty = when {
+                type.kind == TypeKind.STRUCT -> "[${structOf(type).size} x i8]"
+                type.kind == TypeKind.TRAIT -> "[4 x i8]"
+                type.kind == TypeKind.ARRAY && type.elementType?.kind == TypeKind.STRUCT -> {
+                    val size = structOf(type.elementType!!).size
+                    "[${arrayCount(type)} x [$size x i8]]"
+                }
+                type.kind == TypeKind.ARRAY && type.elementType?.kind == TypeKind.TRAIT ->
+                    "[${arrayCount(type)} x [4 x i8]]"
+                else -> TypeMapper.ir(type).llvmName()
+            }
             constants += "@$name = external global $ty"
         }
     }
@@ -177,6 +285,7 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
         val refs = mutableListOf<VarRef>()
         for (g in program.globals) g.init?.let { collectVarRefs(it, refs) }
         for (fn in program.functions) for (stmt in fn.body) collectStmtVarRefs(stmt, refs)
+        for (impl in program.impls) for (fn in impl.methods) for (stmt in fn.body) collectStmtVarRefs(stmt, refs)
         for (ref in refs) {
             val symbol = program.resolved[ref] as? Symbol.FunSymbol ?: continue
             if (symbol.prefix == prefix || symbol.prefix.isEmpty()) continue
@@ -188,6 +297,17 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
                 "${TypeMapper.ir(p.type).llvmName()} %${p.name}"
             }
             constants += "declare $ret @\"$name\"($params)"
+        }
+        // A method of another file needs a declaration with the hidden
+        // receiver: its definition lives in the module that owns the struct.
+        for (binding in program.methods) {
+            if (binding.prefix == prefix || binding.prefix.isEmpty()) continue
+            val fn = binding.decl
+            val ret = TypeMapper.ir(fn.retType ?: Types.unit).llvmName()
+            val params = (listOf("ptr %this") + fn.params.map { p ->
+                "${TypeMapper.ir(p.type).llvmName()} %${p.name}"
+            }).joinToString(", ")
+            constants += "declare $ret @\"${methodSymbol(binding.prefix, fn)}\"($params)"
         }
     }
 
@@ -313,20 +433,32 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
         b.endFunction()
     }
 
-    /** The typed-pointer spelling of a type: `i8*`, `i16*`, … */
-    private fun pointerType(t: WolinType): String = when (TypeMapper.ir(t)) {
-        IrType.I8 -> "i8*"
-        IrType.I16 -> "i16*"
-        IrType.I1 -> "i1*"
-        IrType.Float -> "float*"
+    /** The typed-pointer spelling of a type: `i8*`, `i16*`, `ptr`, … */
+    private fun pointerType(t: WolinType): String = when (t.kind) {
+        TypeKind.UBYTE, TypeKind.BYTE -> "i8*"
+        TypeKind.UWORD, TypeKind.WORD -> "i16*"
+        TypeKind.BOOL -> "i1*"
+        TypeKind.FLOAT -> "float*"
+        // A string variable is already a pointer; its fixed address names
+        // the slot that holds it. A struct is addressed as bytes, and a
+        // trait value is a 4-byte cell.
+        TypeKind.STRING, TypeKind.ARRAY, TypeKind.FUNCTION, TypeKind.STRUCT,
+        TypeKind.TRAIT -> "ptr"
         else -> throw error("Cannot form a pointer to $t")
     }
 
-    /** The element count of a global array: how many the index type can name. */
-    private fun arrayCount(t: WolinType): Int = when (t.indexType?.kind) {
-        TypeKind.UBYTE, TypeKind.BYTE -> 256
-        TypeKind.UWORD, TypeKind.WORD -> 65536
-        else -> throw error("Global array index must be an integer type")
+    /** The struct a struct type names. */
+    private fun structOf(type: WolinType): StructDecl {
+        val name = type.structName ?: throw error("Struct type $type has no name")
+        return structs.firstOrNull { it.name == name } ?: throw error("Unknown struct $name")
+    }
+
+    /** The element count of a global array: explicit, or the index type's domain. */
+    private fun arrayCount(t: WolinType): Int {
+        if (t.indexType?.kind !in setOf(TypeKind.UBYTE, TypeKind.BYTE, TypeKind.UWORD, TypeKind.WORD)) {
+            throw error("Global array index must be an integer type")
+        }
+        return arrayLength(t)
     }
 
     /** The zero value of a type, for an uninitialised global. */

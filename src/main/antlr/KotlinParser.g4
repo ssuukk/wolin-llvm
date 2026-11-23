@@ -52,6 +52,9 @@ importAlias
 
 topLevelObject
     : classDeclaration
+    | structDeclaration
+    | traitDeclaration
+    | implDeclaration
     | objectDeclaration
     | functionDeclaration
     | propertyDeclaration
@@ -64,6 +67,30 @@ classDeclaration
     (NL* COLON NL* delegationSpecifiers)?
     (NL* typeConstraints)?
     (NL* classBody | NL* enumClassBody)?
+    ;
+
+structDeclaration
+    : STRUCT NL* simpleIdentifier NL* structBody
+    ;
+
+structBody
+    : LCURL NL* (propertyDeclaration anysemi*)* NL* RCURL
+    ;
+
+traitDeclaration
+    : TRAIT NL* simpleIdentifier NL* traitBody
+    ;
+
+traitBody
+    : LCURL NL* (functionDeclaration anysemi*)* NL* RCURL
+    ;
+
+implDeclaration
+    : IMPL NL* simpleIdentifier (NL* COLON NL* simpleIdentifier)? NL* implBody
+    ;
+
+implBody
+    : LCURL NL* (functionDeclaration anysemi*)* NL* RCURL
     ;
 
 primaryConstructor
@@ -247,7 +274,13 @@ typeReference
     ;
 
 arrayDeclaration
-    : LSQUARE (userType)? RSQUARE
+    : LSQUARE (userType (COMMA arrayLength)? | arrayLength)? RSQUARE
+    ;
+
+arrayLength
+    : IntegerLiteral
+    | HexLiteral
+    | BinLiteral
     ;
 
 functionType

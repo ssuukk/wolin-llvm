@@ -30,6 +30,7 @@ import pl.qus.wolin.ast.ReturnAtLabel
 import pl.qus.wolin.ast.ReturnAtStmt
 import pl.qus.wolin.ast.ReturnStmt
 import pl.qus.wolin.ast.Stmt
+import pl.qus.wolin.ast.StructDecl
 import pl.qus.wolin.ast.UnaryOp
 import pl.qus.wolin.ast.WhenEntry
 import pl.qus.wolin.ast.WhenExpr
@@ -47,9 +48,15 @@ import java.util.IdentityHashMap
  * which lets a block label be reserved before the block that carries it is
  * opened (forward branches).
  */
-class StmtEmitter(private val b: IrBuilder) {
+class StmtEmitter(
+    private val b: IrBuilder,
+    private val structs: List<StructDecl> = emptyList(),
+) {
     /** The expression emitter; wired by [ModuleEmitter] before any statement is emitted. */
     lateinit var expr: ExprEmitter
+
+    /** The receiver pointer of the impl method being emitted, or null. */
+    var thisValue: IrValue? = null
 
     /** Variable storage for the function being emitted. */
     val vars = VarScope()
@@ -82,7 +89,9 @@ class StmtEmitter(private val b: IrBuilder) {
         globals: List<GlobalDecl>,
         fn: FunDecl,
         foreignGlobals: List<ForeignGlobal> = emptyList(),
+        thisValue: IrValue? = null,
     ) {
+        this.thisValue = thisValue
         vars.reset()
         usedLabels.clear()
         usedLabels += "entry"
@@ -118,7 +127,15 @@ class StmtEmitter(private val b: IrBuilder) {
         val decls = mutableListOf<LocalDecl>()
         collectLocalDecls(fn.body, decls)
         decls.filter { it.location !is FixedAddress && it.location !is FixedArray && it.location !is CpuRegister }
-             .forEach { localSlots[it] = b.alloca(TypeMapper.ir(it.type)) }
+             .forEach { local ->
+                 localSlots[local] = if (local.type.kind == TypeKind.STRUCT) {
+                     b.alloca(IrType.Array(IrType.I8, structOf(local.type).size))
+                 } else if (local.type.kind == TypeKind.TRAIT) {
+                     b.alloca(IrType.Array(IrType.I8, 4))
+                 } else {
+                     b.alloca(TypeMapper.ir(local.type))
+                 }
+             }
 
         // One block per label, in source order, reserved before the body
         // emits so a forward jump can name its target.
@@ -243,6 +260,15 @@ class StmtEmitter(private val b: IrBuilder) {
             }
             else -> {
                 val ptr = localSlots[d] ?: throw error("Local ${d.name} has no slot")
+                if (d.type.kind == TypeKind.STRUCT) {
+                    vars.declare(d.name, VarStorage.Local(ptr))
+                    return
+                }
+                if (d.type.kind == TypeKind.TRAIT) {
+                    vars.declare(d.name, VarStorage.Local(ptr))
+                    d.init?.let { expr.storeTraitRef(ptr, d.type, it) }
+                    return
+                }
                 d.init?.let { init ->
                     val v = expr.emit(init)
                     b.instr(IrType.Void, "store ${TypeMapper.ir(d.type).llvmName()} ${v.name}, ptr ${ptr.name}")
@@ -259,6 +285,11 @@ class StmtEmitter(private val b: IrBuilder) {
      * [IntLit] / [BoolLit] / [RealLit] / [UnaryOp] / [BinaryOp] / [Convert]
      * / [VarRef] / [Call] — any expression the ExprEmitter can evaluate.
      */
+    private fun structOf(type: WolinType): StructDecl {
+        val name = type.structName ?: throw error("Struct type $type has no name")
+        return structs.firstOrNull { it.name == name } ?: throw error("Unknown struct $name")
+    }
+
     private fun emitArrayInit(init: Expr, address: Int, type: WolinType) {
         val ety = type.elementType ?: throw error("Array ${type} has no element type")
         val ity = TypeMapper.ir(ety)

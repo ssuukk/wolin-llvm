@@ -104,6 +104,9 @@ FILE: '@file' ;
 PACKAGE: 'package' ;
 IMPORT: 'import' ;
 CLASS: 'class' ;
+STRUCT: 'struct' ;
+TRAIT: 'trait' ;
+IMPL: 'impl' ;
 INTERFACE: 'interface' ;
 FUN: 'fun' ;
 OBJECT: 'object' ;
@@ -403,6 +406,9 @@ Inside_TRIPLE_QUOTE_OPEN: TRIPLE_QUOTE_OPEN -> pushMode(MultiLineString), type(T
 Inside_VAL: VAL -> type(VAL) ;
 Inside_VAR: VAR -> type(VAR) ;
 Inside_OBJECT: OBJECT -> type(OBJECT) ;
+Inside_STRUCT: STRUCT -> type(STRUCT) ;
+Inside_TRAIT: TRAIT -> type(TRAIT) ;
+Inside_IMPL: IMPL -> type(IMPL) ;
 Inside_SUPER: SUPER -> type(SUPER) ;
 Inside_IN: IN -> type(IN) ;
 Inside_OUT: OUT -> type(OUT) ;
@@ -522,6 +528,7 @@ MultiLineStrText
 
 MultiLineStrEscapedChar
     : '\\' .
+    | UniCharacterLiteral
     ;
 
 MultiLineStrExprStart

@@ -34,6 +34,29 @@ class MultiFileTest {
         assertEquals(7, bytes[0].toInt() and 0xFF)
     }
 
+    @Test fun `a method imported with its struct runs`() {
+        val bytes = runProgramFiles(
+            listOf(
+                SourceFile(
+                    "lib.wtk",
+                    "package lib\n" +
+                        "struct P { var x: ubyte }\n" +
+                        "impl P { fun get(): ubyte { return this.x } }",
+                ),
+                SourceFile(
+                    "app.wtk",
+                    "package app\nimport lib.P\nvar p: P\nfun main() {\n" +
+                        "    p.x = 21\n" +
+                        "    var out: ubyte^0x400 = 0\n" +
+                        "    out = p.get()\n" +
+                        "    while (true) {}\n" +
+                        "}",
+                ),
+            )
+        )
+        assertEquals(21, bytes[0].toInt() and 0xFF)
+    }
+
     @Test fun `two files each defining main is a link error`() {
         assertFailsWith<IllegalStateException> {
             runProgramFiles(
@@ -43,6 +66,34 @@ class MultiFileTest {
                 )
             )
         }
+    }
+
+    @Test fun `a struct coerced to a trait in another module runs`() {
+        val bytes = runProgramFiles(
+            listOf(
+                SourceFile(
+                    "lib.wtk",
+                    "package lib\n" +
+                        "trait Shape { fun area(): uword }\n" +
+                        "struct R { var w: ubyte }\n" +
+                        "impl R : Shape { fun area(): uword { return this.w.toUword() } }\n" +
+                        "var r: R",
+                ),
+                SourceFile(
+                    "app.wtk",
+                    "package app\nimport lib.Shape\nimport lib.R\nimport lib.r\n" +
+                        "var shapes: Shape[ubyte, 1]\n" +
+                        "fun main() {\n" +
+                        "    r.w = 5\n" +
+                        "    shapes[0] = r\n" +
+                        "    var out: ubyte^0x400 = 0\n" +
+                        "    out = shapes[0].area().toUbyte()\n" +
+                        "    while (true) {}\n" +
+                        "}",
+                ),
+            )
+        )
+        assertEquals(5, bytes[0].toInt() and 0xFF)
     }
 
     /** Compiles [files] into one `.prg`, runs it under VICE, returns $0400-$040F. */

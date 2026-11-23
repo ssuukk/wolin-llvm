@@ -17,7 +17,41 @@ class ImportResolver {
      * brings it in.
      */
     fun resolve(name: String, imports: List<ImportDecl>, program: Ast.Program): Symbol? =
-        resolveFunction(name, imports, program) ?: resolveGlobal(name, imports, program)
+        resolveFunction(name, imports, program)
+            ?: resolveGlobal(name, imports, program)
+            ?: resolveStruct(name, imports, program)
+
+    /**
+     * The struct [name] refers to through [imports], or null when no import
+     * brings it in.
+     */
+    fun resolveStruct(name: String, imports: List<ImportDecl>, program: Ast.Program): Symbol? {
+        for (import in imports) {
+            val path = import.path
+            if (path.endsWith(".*")) {
+                val packageName = path.removeSuffix(".*")
+                val scope = program.files.firstOrNull {
+                    it.packageName == packageName && it.structs.any { s -> s.name == name }
+                }
+                if (scope != null) {
+                    return Symbol.StructSymbol(scope.structs.first { it.name == name })
+                }
+                continue
+            }
+            val separator = path.lastIndexOf('.')
+            if (separator < 0) continue
+            val packageName = path.substring(0, separator)
+            val importedName = path.substring(separator + 1)
+            if (importedName != name) continue
+            val scope = program.files.firstOrNull {
+                it.packageName == packageName && it.structs.any { s -> s.name == importedName }
+            }
+            if (scope != null) {
+                return Symbol.StructSymbol(scope.structs.first { it.name == importedName })
+            }
+        }
+        return null
+    }
 
     /**
      * The global [name] refers to through [imports], or null when no import

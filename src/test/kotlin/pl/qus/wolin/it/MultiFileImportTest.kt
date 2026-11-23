@@ -32,6 +32,26 @@ class MultiFileImportTest {
         assertEquals(7, bytes[0].toInt() and 0xFF)
     }
 
+    @Test fun `an imported struct type is visible`() {
+        val bytes = runProgramFiles(
+            listOf(
+                SourceFile("lib.wtk", "package lib\nstruct P { var x: ubyte; var y: ubyte }"),
+                SourceFile(
+                    "app.wtk",
+                    "package app\nimport lib.P\n" +
+                        "var p: P\n" +
+                        "fun main() {\n" +
+                        "    p.y = 42\n" +
+                        "    var out: ubyte^0x400 = 0\n" +
+                        "    out = p.y\n" +
+                        "    while (true) {}\n" +
+                        "}",
+                ),
+            )
+        )
+        assertEquals(42, bytes[0].toInt() and 0xFF)
+    }
+
     /** Compiles [files] into one `.prg`, runs it under VICE, returns $0400-$040F. */
     private fun runProgramFiles(files: List<SourceFile>): ByteArray {
         val dir = Files.createTempDirectory("wolinc-multi")

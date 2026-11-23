@@ -74,6 +74,61 @@ class BitOpsTest {
         assertEquals(0xF0, bytes[1].toInt() and 0xFF)
     }
 
+    @Test fun `a bitmask literal clears the high byte of a word`() {
+        val bytes = runProgram("""
+            fun main() {
+                var w: word = 0x1234
+                var out: word^0x400 = 0
+                out = w & 0xFF00
+                while (true) {}
+            }
+        """)
+        assertEquals(0x00, bytes[0].toInt() and 0xFF)
+        assertEquals(0x12, bytes[1].toInt() and 0xFF)
+    }
+
+    @Test fun `a narrower bit-assignment mask is extended`() {
+        val bytes = runProgram("""
+            fun main() {
+                var x: uword = 0x1200
+                var m: ubyte = 0x0F
+                x |= m
+                var y: word = 0
+                var s: byte = -1
+                y := s
+                var outX: uword^0x400 = 0
+                var outY: word^0x402 = 0
+                outX = x
+                outY = y
+                while (true) {}
+            }
+        """)
+        assertEquals(0x0F, bytes[0].toInt() and 0xFF)
+        assertEquals(0x12, bytes[1].toInt() and 0xFF)
+        assertEquals(0xFF, bytes[2].toInt() and 0xFF)
+        assertEquals(0xFF, bytes[3].toInt() and 0xFF)
+    }
+
+    @Test fun `a wider bit-assignment mask is truncated`() {
+        val bytes = runProgram("""
+            fun main() {
+                var x: ubyte = 0
+                var m: uword = 0x12FF
+                x := m
+                var y: ubyte = 0xF0
+                var w: word = -1
+                y &= w
+                var out0: ubyte^0x400 = 0
+                var out1: ubyte^0x401 = 0
+                out0 = x
+                out1 = y
+                while (true) {}
+            }
+        """)
+        assertEquals(0xFF, bytes[0].toInt() and 0xFF)
+        assertEquals(0xF0, bytes[1].toInt() and 0xFF)
+    }
+
     @Test fun `xor precedence sits below the additive level`() {
         // a | b xor c & d must group as (a | b) xor (c & d) = 0x00.
         // The plausible wrong grouping a | (b xor (c & d)) yields 0x11.

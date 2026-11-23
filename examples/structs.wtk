@@ -1,0 +1,82 @@
+// structs.wtk — packed structs, an array of structs, and dynamic traits.
+//
+// Build:
+//   make examples/structs.prg
+
+package demo.structs
+
+import c64.vic.borderColor
+import c64.vic.backgroundColor0
+import wolin.println
+
+// A trait is a set of method signatures. `borderValue` is required;
+// `backgroundValue` has a default body, copied into each implementor.
+trait PaletteColor {
+    fun borderValue(): ubyte
+    fun backgroundValue(): ubyte { return this.background }
+}
+
+// Color keeps a separate border and background. It uses the trait's
+// default `backgroundValue`.
+struct Color {
+    var border: ubyte
+    var background: ubyte
+}
+
+
+// A method implemented on Color
+impl Color {
+    fun set(border: ubyte, background: ubyte) {
+        this.border = border
+        this.background = background
+    }
+}
+
+// A method implemented on PaletteColor trait for Color
+impl Color : PaletteColor {
+    fun borderValue(): ubyte { return this.border }
+}
+
+// Mono has one shade and overrides both trait methods. A `PaletteColor[4]`
+// holds both kinds of value: each element is a data pointer plus a vtable
+// pointer, and the method call picks the implementation at runtime.
+struct Mono {
+    var shade: ubyte
+}
+
+impl Mono {
+    fun set(shade: ubyte) {
+        this.shade = shade
+    }
+}
+
+// A method implemented op PaletteColor trait for Mono
+impl Mono : PaletteColor {
+    fun borderValue(): ubyte { return this.shade }
+    fun backgroundValue(): ubyte { return 0 }
+}
+
+var colors: Color[ubyte, 3]
+var mono: Mono
+var palette: PaletteColor[ubyte, 4]
+
+fun main() {
+    colors[0].set(1, 0)
+    colors[1].set(5, 7)
+    colors[2].set(7, 13)
+    mono.set(11)
+
+    // Coerce each concrete struct to a trait reference. `palette` is
+    // heterogeneous: the first three entries are Colors, the last is a Mono.
+    palette[0] = colors[0]
+    palette[1] = colors[1]
+    palette[2] = colors[2]
+    palette[3] = mono
+
+    var i: ubyte = 0
+    while (i<4) {
+        // One call site, four possible implementations.
+        println("${i} bor=${palette[i].borderValue()} bac=${palette[i].backgroundValue()}")
+        i++
+    }
+}

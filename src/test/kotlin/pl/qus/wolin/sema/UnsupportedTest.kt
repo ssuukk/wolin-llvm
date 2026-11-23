@@ -95,9 +95,12 @@ class UnsupportedTest {
         assertRejected("fun f() { val x = 1 ?: 2 }")
     }
 
-    @Test fun `this and super are rejected`() {
-        assertRejected("fun f() { val x = this }")
+    @Test fun `super is rejected`() {
         assertRejected("fun f() { val x = super.foo() }")
+    }
+
+    @Test fun `extension functions are rejected`() {
+        assertRejected("fun ubyte.foo(): ubyte { return 1 }")
     }
 
     @Test fun `the not-null assertion is rejected`() {

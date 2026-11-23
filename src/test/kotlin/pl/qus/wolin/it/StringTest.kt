@@ -29,6 +29,73 @@ class StringTest {
         assertEquals(0, bytes[2].toInt() and 0xFF)
     }
 
+    @Test fun `a global string literal is initialised`() {
+        val bytes = runProgram("""
+            var s: string = "hi"
+            fun main() {
+                var out0: ubyte^0x400 = 0
+                var out1: ubyte^0x401 = 0
+                out0 = s[0]
+                out1 = s[1]
+                while (true) {}
+            }
+        """)
+        assertEquals(0x48, bytes[0].toInt() and 0xFF)
+        assertEquals(0x49, bytes[1].toInt() and 0xFF)
+    }
+
+    /**
+     * A fixed-address string is a pointer variable at that address: a read
+     * loads the pointer, exactly like a global or local string.
+     */
+    @Test fun `a fixed address string loads the pointer`() {
+        val bytes = runProgram("""
+            fun main() {
+                var s: string^0x500
+                s = "hi"
+                var out0: ubyte^0x400 = 0
+                var out1: ubyte^0x401 = 0
+                out0 = s[0]
+                out1 = s[1]
+                while (true) {}
+            }
+        """)
+        assertEquals(0x48, bytes[0].toInt() and 0xFF)
+        assertEquals(0x49, bytes[1].toInt() and 0xFF)
+    }
+
+    @Test fun `a fixed address global string loads the pointer`() {
+        val bytes = runProgram("""
+            var s: string^0x500
+            fun main() {
+                s = "hi"
+                var out0: ubyte^0x400 = 0
+                var out1: ubyte^0x401 = 0
+                out0 = s[0]
+                out1 = s[1]
+                while (true) {}
+            }
+        """)
+        assertEquals(0x48, bytes[0].toInt() and 0xFF)
+        assertEquals(0x49, bytes[1].toInt() and 0xFF)
+    }
+
+    @Test fun `a global string can copy an earlier global string`() {
+        val bytes = runProgram("""
+            var a: string = "hi"
+            var b: string = a
+            fun main() {
+                var out0: ubyte^0x400 = 0
+                var out1: ubyte^0x401 = 0
+                out0 = b[0]
+                out1 = b[1]
+                while (true) {}
+            }
+        """)
+        assertEquals(0x48, bytes[0].toInt() and 0xFF)
+        assertEquals(0x49, bytes[1].toInt() and 0xFF)
+    }
+
     @Test fun `a newline escape is one byte`() {
         val bytes = runProgram("""
             fun main() {

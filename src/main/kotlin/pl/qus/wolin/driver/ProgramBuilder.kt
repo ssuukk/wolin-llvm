@@ -43,6 +43,9 @@ class ProgramBuilder {
                 packageName = packageName,
                 globals = built.globals,
                 functions = built.functions,
+                structs = built.structs,
+                traits = built.traits,
+                impls = built.impls,
                 imports = built.imports,
                 mangledPrefix = Mangler.mangle(packageName, stem, ""),
             )
@@ -61,6 +64,9 @@ class ProgramBuilder {
         val merged = Program(
             globals = scopes.flatMap { it.globals },
             functions = scopes.flatMap { it.functions },
+            structs = scopes.flatMap { it.structs },
+            traits = scopes.flatMap { it.traits },
+            impls = scopes.flatMap { it.impls },
             imports = scopes.flatMap { it.imports },
             files = scopes,
             visibleGlobals = visible.flatten().distinct(),

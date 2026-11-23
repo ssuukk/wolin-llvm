@@ -201,6 +201,11 @@ class TypeCheckerTest {
         assertEquals(Types.ubyte, x.type)
     }
 
+    @Test fun `a narrower bit-assignment mask is accepted`() {
+        typeChecker("fun f() { var x: word = 0; var g: ubyte = 1; x := g }")
+        typeChecker("fun f() { var x: word = 0; var g: byte = -1; x |= g }")
+    }
+
     @Test fun `xor takes the left operand type`() {
         fun typeOfLast(src: String): WolinType =
             typeChecker(src).functions[0].body.filterIsInstance<Ast.LocalDecl>().last().type
@@ -217,6 +222,28 @@ class TypeCheckerTest {
     @Test fun `xor rejects bool operands`() {
         assertThrows<SemaException> {
             typeChecker("fun f() { var a: bool = true; var b: bool = false; var c = a xor b }")
+        }
+    }
+
+    @Test fun `a bitmask literal takes the signed operand's width`() {
+        fun typeOfLast(src: String): WolinType =
+            typeChecker(src).functions[0].body.filterIsInstance<Ast.LocalDecl>().last().type
+        assertEquals(Types.word, typeOfLast("fun f() { var w: word = 1; var r = w & 0xFF00 }"))
+        assertEquals(Types.word, typeOfLast("fun f() { var w: word = 1; var r = w | 0x8000 }"))
+        assertEquals(Types.word, typeOfLast("fun f() { var w: word = 1; var r = w xor 0xFFFF }"))
+        assertEquals(Types.word, typeOfLast("fun f() { var w: word = 1; var r = 0xFF00 & w }"))
+        assertEquals(Types.byte, typeOfLast("fun f() { var b: byte = 1; var r = b & 0xFF }"))
+    }
+
+    @Test fun `a bitmask literal outside the width is still rejected`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var w: word = 1; var r = w & 0x10000 }")
+        }
+    }
+
+    @Test fun `a comparison literal still uses the signed range`() {
+        assertThrows<SemaException> {
+            typeChecker("fun f() { var w: word = 1; var r = w == 0xFF00 }")
         }
     }
 

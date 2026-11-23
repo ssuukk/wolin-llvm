@@ -211,10 +211,15 @@ private fun emitFiles(program: Ast.Program): List<CompiledFile>? {
             Ast.Program(
                 globals = scope.globals,
                 functions = scope.functions,
+                structs = program.structs,
+                traits = scope.traits,
+                impls = scope.impls,
                 imports = scope.imports,
                 resolved = program.resolved,
                 packageName = scope.packageName,
                 visibleGlobals = visibleGlobalsFor(program, scope),
+                methods = program.methods,
+                vtables = program.vtables,
             ),
             scope.mangledPrefix,
         )

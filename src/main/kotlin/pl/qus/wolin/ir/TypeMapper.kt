@@ -19,5 +19,9 @@ object TypeMapper {
         TypeKind.STRING -> IrType.Ptr
         TypeKind.ARRAY -> IrType.Ptr
         TypeKind.FUNCTION -> IrType.Ptr
+        // A trait value is addressed: the expression emits the cell address.
+        TypeKind.TRAIT -> IrType.Ptr
+        TypeKind.STRUCT ->
+            throw IllegalArgumentException("Struct $t is addressed as storage, not loaded as a value")
     }
 }

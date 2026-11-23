@@ -18,6 +18,9 @@ sealed interface Ast {
     data class Program(
         val globals: List<GlobalDecl>,
         val functions: List<FunDecl>,
+        val structs: List<StructDecl> = emptyList(),
+        val traits: List<TraitDecl> = emptyList(),
+        val impls: List<ImplDecl> = emptyList(),
         val imports: List<ImportDecl>,
         /** Which declaration each variable reference bound to. Filled by the checker. */
         val resolved: MutableMap<VarRef, Symbol> = mutableMapOf(),
@@ -37,6 +40,10 @@ sealed interface Ast {
          * same-package globals, and the imported ones.
          */
         val visibleGlobals: List<ForeignGlobal> = emptyList(),
+        /** Method bindings, filled by the checker. */
+        val methods: List<MethodBinding> = emptyList(),
+        /** Static vtables, filled by the checker: one per (struct, trait) impl. */
+        val vtables: List<VTableInfo> = emptyList(),
     ) : Ast
 
     /**
@@ -50,6 +57,9 @@ sealed interface Ast {
         val packageName: String,
         val globals: List<GlobalDecl>,
         val functions: List<FunDecl>,
+        val structs: List<StructDecl> = emptyList(),
+        val traits: List<TraitDecl> = emptyList(),
+        val impls: List<ImplDecl> = emptyList(),
         val imports: List<ImportDecl>,
         val mangledPrefix: String,
         /**
@@ -59,6 +69,55 @@ sealed interface Ast {
          * global is emitted under.
          */
         val visibleGlobals: List<ForeignGlobal> = emptyList(),
+    ) : Ast
+
+    /**
+     * A struct declaration: a packed layout with named fields. The checker
+     * fills [size] and [fieldOffsets].
+     */
+    data class StructDecl(
+        val name: String,
+        val fields: List<GlobalDecl>,
+        var size: Int = 0,
+        val fieldOffsets: MutableMap<String, Int> = mutableMapOf(),
+    ) : Ast
+
+    /** A trait declaration: method signatures, with optional default bodies. */
+    data class TraitDecl(
+        val name: String,
+        val methods: List<FunDecl>,
+        val line: Int? = null,
+    ) : Ast
+
+    /** `impl Type` (inherent methods) or `impl Type : Trait`. */
+    data class ImplDecl(
+        val structName: String,
+        val traitName: String?,
+        var methods: List<FunDecl>,
+        val line: Int? = null,
+    ) : Ast
+
+    /** A method attached to a struct, with the prefix of the file that implements it. */
+    data class MethodBinding(
+        val owner: String,
+        val name: String,
+        val decl: FunDecl,
+        val prefix: String,
+        val traitName: String? = null,
+    ) : Ast
+
+    /**
+     * One static vtable: the function-pointer table for `impl Struct : Trait`.
+     *
+     * [prefix] is the mangled prefix of the file that declares the struct and
+     * therefore emits the table. [arity] is the number of trait methods; the
+     * slot of a method is its declaration index in the trait.
+     */
+    data class VTableInfo(
+        val structName: String,
+        val traitName: String,
+        val prefix: String,
+        val arity: Int,
     ) : Ast
 
     /** A global of another file, visible in this one. */
@@ -101,6 +160,12 @@ sealed interface Ast {
          * does not come from a register.
          */
         val retLocation: Location? = null,
+        /** A trait method with no body. */
+        val isAbstract: Boolean = false,
+        /** The struct a method belongs to, filled by the checker. */
+        val owner: String? = null,
+        /** The trait an implementation method comes from, if any. */
+        val traitName: String? = null,
     ) : Ast
 
     data class Param(val name: String, val type: WolinType, val location: Location?) : Ast
@@ -130,7 +195,24 @@ sealed interface Ast {
     data class VarRef(val name: String, override var type: WolinType) : Expr
     data class UnaryOp(val op: String, val operand: Expr, override var type: WolinType, val prefix: Boolean = false) : Expr
     data class BinaryOp(val op: String, val left: Expr, val right: Expr, override var type: WolinType) : Expr
-    data class Call(val callee: Expr, val args: List<Expr>, override var type: WolinType) : Expr
+    data class Call(val callee: Expr, val args: List<Expr>, override var type: WolinType) : Expr {
+        /** The method this call resolves to, filled by the checker. */
+        var resolvedMethod: FunDecl? = null
+        /** The mangled prefix of the file that implements the method. */
+        var methodPrefix: String = ""
+        /** The trait-method slot for a dynamic call, or -1 for a static call. */
+        var traitSlot: Int = -1
+    }
+    /** `this` inside an impl method: the receiver's storage. */
+    data class ThisRef(override var type: WolinType) : Expr
+    /** `receiver.field` — a field read or an assignment target. */
+    data class MemberAccess(
+        val receiver: Expr,
+        val name: String,
+        override var type: WolinType,
+        /** The struct the field belongs to, filled by the checker. */
+        var owner: StructDecl? = null,
+    ) : Expr
     data class Assign(val target: Expr, val value: Expr, override var type: WolinType, val op: String = "=") : Expr
     data class FunctionLit(
         val params: List<String>,
@@ -237,6 +319,10 @@ sealed interface Ast {
 }
 
 typealias Program = Ast.Program
+typealias StructDecl = Ast.StructDecl
+typealias TraitDecl = Ast.TraitDecl
+typealias ImplDecl = Ast.ImplDecl
+typealias MethodBinding = Ast.MethodBinding
 typealias ImportDecl = Ast.ImportDecl
 typealias GlobalDecl = Ast.GlobalDecl
 typealias FunDecl = Ast.FunDecl
@@ -258,6 +344,8 @@ typealias VarRef = Ast.VarRef
 typealias UnaryOp = Ast.UnaryOp
 typealias BinaryOp = Ast.BinaryOp
 typealias Call = Ast.Call
+typealias ThisRef = Ast.ThisRef
+typealias MemberAccess = Ast.MemberAccess
 typealias Assign = Ast.Assign
 typealias FunctionLit = Ast.FunctionLit
 typealias Stmt = Ast.Stmt

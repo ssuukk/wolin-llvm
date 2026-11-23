@@ -24,6 +24,7 @@ in `while (true) {}` because the C64 program loop never returns.
 | `float` | `float` | IEEE-754 single | **not** the old Wozniak FFP format; first use links ~3.5 KB of soft-float code |
 | `string` | `ptr i8` | NUL-terminated byte sequence | |
 | `elem[index]` | `ptr` | | array; the index type is part of the type: `ubyte[ubyte]`, `uword[uword]` |
+| `elem[index, N]` | `ptr` | | array with explicit length `N`; `elem[N]` uses a `ubyte` index |
 | `(a, b)->r` | `ptr` | | function pointer type, e.g. `(ubyte,ubyte)->ubyte` |
 
 A declaration without a type takes the type of its initialiser. A declaration
@@ -58,6 +59,9 @@ var x: bool^CPU.I             // CPU status flag: interrupt bit
 var carry: bool^CPU.C         // CPU status flag: carry bit
 var arr: ubyte[ubyte]         // global array, data section, zero-initialised, 256 elements
 var arr: ubyte[uword]         // 65536 elements (size = index type's domain)
+var arr: ubyte[ubyte, 16]     // 16 elements, ubyte index
+var arr: ubyte[16]            // 16 elements, ubyte index
+var arr: uword[uword, 16]     // 16 elements, uword index
 var arr: ubyte[ubyte]^0x3000  // array at a fixed address
 val x: ubyte = 5              // cannot be assigned to
 fun f(a: ubyte, b: ubyte): ubyte { return a + b }
@@ -126,11 +130,11 @@ var code: ubyte = when (key) { 0x4C -> 1; 0x4F -> 2; else -> 0 }
 | Arithmetic | `+` `-` `*` `/` `%` | wraps in the result type's width; for `byte`/`word`, `/` and `%` are **signed** (truncate toward zero); for `float`, IEEE-754 |
 | Equality | `==` `!=` | bitwise equality |
 | Comparison | `<` `<=` `>` `>=` | **signed** for `byte`/`word`, unsigned for `ubyte`/`uword`; ordered `fcmp` for `float` |
-| Bitwise | `&` `|` `xor` | any integer type, same-width operands |
+| Bitwise | `&` `|` `xor` | any integer type, same-width operands; a literal mask may use the full width of the other operand (`word & 0xFF00`) |
 | Logical | `&&` `||` `!` | bool only; `&&`/`||` **short-circuit** (the old Wolin did not — that is a deliberate bug fix) |
 | Increment | `++` `--` | prefix and postfix; postfix yields the old value, prefix the new one |
 | Assignment | `=` `+=` `-=` `*=` `/=` `%=` | value must have the target's type (literals excepted) |
-| Bit-assignment | `:=` `.=` `&=` `\|=` | `:=` sets bits (or), `.=` clears bits (and-not), `&=` and `\|=` mask; the mask may be *narrower* than the target (it is extended) |
+| Bit-assignment | `:=` `.=` `&=` `\|=` | `:=` sets bits (or), `.=` clears bits (and-not), `&=` and `\|=` mask; the mask may differ in width: narrower is extended, wider is truncated to the target's low bits |
 
 ### Precedence, highest to lowest
 
@@ -231,9 +235,15 @@ var v: ubyte = arr[3]
 
 - The index may be any integer type; there are **no bounds checks**.
 - `uword`-element arrays are scaled by the GEP; `ubyte` arrays are not.
-- Global arrays without a fixed address are zero-initialised in the data
-  section; their size is the index type's domain (`ubyte` → 256, `uword` →
+- **Explicit length:** `T[N]` is an array of `N` elements with a `ubyte`
+  index; `T[index, N]` names both the index type and the length. Without a
+  length, the size is the index type's domain (`ubyte` → 256, `uword` →
   65536).
+- An explicit length must fit the index type's domain and the 64 KiB address
+  space; `uword[uword, 40000]` is rejected because two bytes per element do
+  not fit.
+- Global arrays without a fixed address are zero-initialised in the data
+  section.
 
 ### Array initialisers
 
@@ -262,19 +272,183 @@ fun main() {
   the values are stored at function entry.
 - **String initialisers** (`ubyte`-element arrays only): the string's bytes
   plus the NUL terminator, prefix fill, remainder zero.
-- **Count check.** The list (or string + NUL) may not exceed the index
-  type's domain; longer lists are a compile error.
+- **Count check.** The list (or string + NUL) may not exceed the explicit
+  length or, without one, the index type's domain; longer lists are a compile
+  error.
 - **Accepted positions:** global array initialiser (constant elements),
   global fixed-address array initialiser (constant elements), local
   fixed-address array initialiser (runtime expressions). Anywhere else —
   `var x = [1, 2]` with no declared type, `arr = [1, 2]` in assignment
   position, a call argument — is a compile error.
 
+## Structs
+
+A `struct` is a named packed layout. It is storage, not a first-class value:
+fields are readable and writable, but the struct itself cannot be copied,
+passed, returned, compared, or allocated on a heap.
+
+```kotlin
+struct Point {
+    var x: ubyte
+    var y: uword
+}
+
+var p: Point                    // global, zero-initialised, 3 bytes
+var points: Point[ubyte, 4]     // 4 elements, contiguous, 12 bytes
+var screen: Point[ubyte]^0x3000 // fixed address, no storage emitted
+
+fun main() {
+    p.x = 10
+    p.y = 300
+    points[2].x = 7
+    var out: ubyte^0x400 = 0
+    out = points[2].x
+    while (true) {}
+}
+```
+
+- Fields are in declaration order with **no padding**. The 6502 has no
+  alignment requirement; an unaligned `uword` field is a valid unaligned
+  load/store.
+- Field types are scalar: `ubyte`, `byte`, `uword`, `word`, `bool`, `float`
+  and `string`. Arrays and other structs are not fields in v1.
+- Fields must be `var`, must declare their type, and may not have an
+  initialiser or a fixed address.
+- A struct is stored as a byte blob. An array of structs is a contiguous
+  `N × sizeof(struct)` blob; element *i* starts at `i × sizeof(struct)`.
+- A global struct/array is zero-initialised. A local struct is stack storage
+  and is uninitialised until written. A fixed-address struct's field access
+  is volatile, like every other fixed-address access.
+- A struct can be bound to a trait it implements: `var s: Shape = p` stores
+  `p`'s address and the vtable for `(Point, Shape)` in a 4-byte trait cell.
+  This is a non-owning reference, not a copy; see *Trait values* below.
+- Local arrays of structs need a fixed address, like other local arrays.
+- Operations: read `p.field`, write `p.field = v`, compound assignment
+  `p.field += v`, increment `p.field++` / `++p.field`; array element fields
+  `points[i].field`. There are no bounds checks.
+- Not supported: constructors, literals, copying, assignment of one struct
+  to another, struct parameters/returns, arrays or structs as fields, and
+  structs inside fixed-address hardware descriptions with per-field
+  addresses.
+
+## Traits and impls
+
+A `trait` is a named set of method signatures. A `struct` opts into it with
+`impl Type : Trait`; methods are defined in `impl` blocks, not in the struct
+body. A trait name is also a type: `var s: Shape` is a non-owning
+reference to a struct that implements the trait. A call through it
+dispatches at runtime through a static vtable.
+
+```kotlin
+trait Shape {
+    fun area(): uword
+    fun name(): string { return "shape" }   // default body
+}
+
+struct Rect {
+    var w: ubyte
+    var h: ubyte
+}
+
+impl Rect {                                  // inherent methods
+    fun scale(k: ubyte) {
+        this.w *= k
+        this.h *= k
+    }
+}
+
+impl Rect : Shape {                          // trait implementation
+    fun area(): uword {
+        return this.w.toUword() * this.h.toUword()
+    }
+}
+
+var r: Rect
+
+fun main() {
+    r.w = 3
+    r.h = 4
+    r.scale(2)
+    var out: ubyte^0x400 = 0
+    out = r.area().toUbyte()
+    while (true) {}
+}
+```
+
+- An `impl Type` block adds inherent methods; an `impl Type : Trait` block
+  adds the trait's methods. One impl per `(trait, struct)`.
+- An impl must be in the **same file** as the struct. A trait from another
+  package must be imported to write the impl.
+- A trait declares methods only. No fields, state, constructors, associated
+  types or constants, supertraits, or generics. Method parameters and
+  return types are scalar; a struct value is still not first class.
+- Every trait method must be present exactly once in the impl, unless the
+  trait supplies a default body. An impl may not add methods the trait does
+  not declare.
+- A default body is copied into each implementor and checked there, so it
+  may use that struct's fields (`this.w`) and its other methods. A method
+  name may not collide with a field, and may not repeat across impl blocks.
+  The copy trades code size for a shared runtime body; every `(struct, trait)`
+  vtable points at its implementor's copy.
+- `this` names the receiver storage. Inside an impl method, fields are
+  reached through it: `this.w`, `this.w = 1`, `this.bump()`. `this` is not
+  available in a free function or a function literal.
+- A method is emitted as a function with a hidden receiver pointer:
+  `define i8 @"app.Point.get"(ptr %this)`. The call passes the struct's
+  address. A trait impl also emits a static vtable:
+  `@"vt.app.Point.Shape" = constant [N x ptr] [...]`.
+- A method call on a **concrete** struct is static: the receiver's struct
+  type selects the method at compile time. It works on a global, local,
+  fixed-address, or array-element struct: `p.get()`, `points[i].bump()`.
+- A method call on a **trait-typed** value is dynamic: the receiver cell
+  supplies the data pointer and vtable pointer, and the call goes through
+  the vtable slot for that method. See *Trait values* below.
+- Field access through `this` is volatile. A method is shared by every
+  instance, so it cannot know whether its receiver is a fixed-address
+  hardware struct; treating its fields as volatile keeps hardware access
+  correct.
+- Not supported: trait bounds or generics, trait returns, trait fields,
+  downcasting, method overloading, methods on arrays or scalars, and methods
+  that pass or return a struct.
+
+### Trait values
+
+A trait name is a type: `var s: Shape`. The value is a 4-byte non-owning
+cell: a 2-byte data pointer followed by a 2-byte vtable pointer. Assigning
+a struct stores the struct's address and the static vtable for
+`(struct, trait)`; assigning another trait value copies both pointers. The
+struct must implement the trait.
+
+```kotlin
+var shapes: Shape[ubyte, 2]
+shapes[0] = rect
+shapes[1] = circle
+var a: uword = shapes[0].area()   // indirect call through the vtable
+```
+
+- The data pointer may name a global, local, fixed-address, or array-element
+  struct. Storage must outlive the reference; there is no borrow checking.
+- Trait arrays are supported; every element is a 4-byte cell.
+- A trait value may be a function parameter: `fun f(s: Shape)`. The cell
+  address is passed, so the callee reads the same data and vtable pointers.
+- A trait value may not be returned, stored in a struct field, compared, or
+  used in arithmetic.
+- A vtable is one 2-byte pointer per trait method, one table per
+  `(struct, trait)`, in trait declaration order. There is no drop, size or
+  alignment header.
+- Fixed-address structs work: the data pointer is the hardware address, and
+  field access through `this` stays volatile.
+- There is no heap or ownership: a trait value is a reference, not a `Box`.
+
 ## Fixed addresses and hardware
 
 `var x: T^0xADDR` declares the variable *at* the address: reads and writes
 are direct (volatile) loads and stores of the variable's width, and the
 variable has no storage of its own.
+
+A `string` variable is a pointer, so its fixed-address slot holds a 2-byte
+pointer; reads load that pointer and index the bytes it points at, exactly
+like a global or local string.
 
 ```kotlin
 var border: ubyte^0xd020         // the VIC-II border colour register
@@ -589,7 +763,7 @@ Errors are `SemaException`s with a message that names the problem:
 | `Unsupported construct: <name>` | a v1-rejected Kotlin construct; the name identifies it (`class C`, `elvis operator`, `for loop`, …). The full catalogue is pinned by `UnsupportedTest`. |
 | `Attempt reassign X Y` | mixed operand types in arithmetic/comparison/bitwise, or an assignment whose value has a different type |
 | `Value out of range` | a literal that does not fit its declared type |
-| `Unknown type X` / `Unknown variable X` / `Unknown function X` | resolution failure |
+| `Unknown struct X` / `Unknown variable X` / `Unknown function X` | resolution failure |
 | `X conversion requires an integer, not Y` | a conversion on a non-integer |
 | `Cannot assign to val X` | assignment to a `val` |
 | `The else branch of a when must be last` | `else` not in the final position |
@@ -597,10 +771,29 @@ Errors are `SemaException`s with a message that names the problem:
 | `this when expression may not match any branch` | a `when` expression with no `else` |
 | `Array literal needs an array type` | `var x = [1, 2]` with no declared array type |
 | `Array literal can only initialise a declaration` | an array literal in assignment or expression position |
-| `Too many array elements` (with the count and the domain) | a list longer than the index type's domain |
+| `Too many array elements` (with the length) | a list longer than the explicit length or index domain |
 | `String initialiser needs a ubyte element type` | a string initialiser on a `uword`-element array |
-| `String initialiser too long` (with the length and the domain) | a string whose bytes + NUL exceed the index domain |
+| `String initialiser too long` (with the length) | a string whose bytes + NUL exceed the explicit length or index domain |
 | `local arrays need a fixed address in v1` | an array initialiser on a local non-fixed array |
+| `Array length must be at least 1` | an explicit array length is zero |
+| `Array length N exceeds the X index range M` | an explicit length does not fit the index type |
+| `Array X does not fit in the 64 KiB address space` | length × element size, or a fixed base, exceeds 64 KiB |
+| `A struct value is not first class` | a struct is copied, passed, returned, or used as a value; binding it to a trait reference is allowed |
+| `Cannot assign a struct value; assign a field instead` | `points[i] = ...` rather than `points[i].field = ...` |
+| `Struct X has no method Y` | a method-style call whose name is not implemented for `X` |
+| `Unknown trait X` | an `impl X : Y` naming no visible trait |
+| `Trait X has no method Y` | a call on a trait value naming no trait method |
+| `Struct X does not implement trait Y` | assigning a struct to a trait it does not implement |
+| `A trait value cannot be returned` | a trait used as a function or method return type |
+| `Impl of trait X for Y is missing method Z` | a required trait method has no implementation |
+| `Method X does not match trait Y` | the implementation's parameter or return types differ |
+| `Trait X does not declare method Y` | an extra method in a trait impl |
+| `Duplicate impl of trait X for Y` | two impls of one trait for one struct |
+| `Duplicate method X in struct Y` | the same method name in two impl blocks, or twice in one |
+| `Method X collides with a field of Y` | a method and a field share a name |
+| `this is only available in an impl method` | `this` in a free function or function literal |
+| `impl for X must be in the same file as the struct` | a cross-file inherent/trait impl |
+| `Struct field X is not a scalar type: Y` | an array or struct used as a struct field |
 | `Unknown label X` | a labelled jump to a name that is not a label of the current function |
 | `Label X already defined` | the same label name declared twice in one function |
 

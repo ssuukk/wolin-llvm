@@ -4,6 +4,11 @@ import pl.qus.wolin.ast.*
 import java.util.IdentityHashMap
 import java.util.LinkedHashMap
 
+/** Names a struct declaration may not reuse. */
+private val BUILTIN_TYPE_NAMES = setOf(
+    "ubyte", "byte", "uword", "word", "bool", "unit", "float", "string",
+)
+
 /**
  * Walks the typed AST and enforces the type rules.
  *
@@ -28,16 +33,52 @@ class TypeChecker {
     /** The whole-program view the imports resolve against. */
     private var program: Ast.Program? = null
 
+    /** The structs visible in the file being checked. */
+    private var structTypes: MutableMap<String, StructDecl> = mutableMapOf()
+
+    /** The traits visible in the file being checked. */
+    private var traitTypes: MutableMap<String, TraitDecl> = mutableMapOf()
+
+    /** The receiver of the impl method being checked, or null outside one. */
+    private var currentThis: StructDecl? = null
+
+    /** Every method binding in the program, keyed by struct. */
+    private val methodsByStruct = java.util.IdentityHashMap<StructDecl, LinkedHashMap<String, MethodBinding>>()
+    private val methodBindings = mutableListOf<MethodBinding>()
+    /** One vtable per trait impl, filled while impls are prepared. */
+    private val vtableInfos = mutableListOf<Ast.VTableInfo>()
+    /** Traits already implemented by each struct, by declaration identity. */
+    private val implementedTraits =
+        java.util.IdentityHashMap<StructDecl, MutableSet<TraitDecl>>()
+
+    /** Structs whose layout has already been computed. */
+    private val preparedStructs = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<StructDecl, Boolean>(),
+    )
+
     fun check(file: Ast.Program): Ast.Program {
         resolved = IdentityHashMap()
         program = file
+        preparedStructs.clear()
+        methodsByStruct.clear()
+        methodBindings.clear()
+        vtableInfos.clear()
+        implementedTraits.clear()
         // The whole-program view: each file is checked in its own scope, so
         // a name from another package is visible only through an import.
         val scopes = file.files.ifEmpty { listOf(singleFileScope(file)) }
+        scopes.flatMap { it.structs }.forEach { prepareStruct(it) }
+        // Traits and impls must be known before any method call is checked,
+        // because a call resolves against the method table, not the AST walk.
+        scopes.forEach { prepareTraitsAndImpls(it, scopes, file) }
         scopes.forEach { fileScope ->
             checkFile(fileScope, file)
         }
-        return file.copy(resolved = resolved)
+        return file.copy(
+            resolved = resolved,
+            methods = methodBindings.toList(),
+            vtables = vtableInfos.toList(),
+        )
     }
 
     /** The scope of a program built from a single file. */
@@ -46,15 +87,384 @@ class TypeChecker {
         packageName = file.packageName,
         globals = file.globals,
         functions = file.functions,
+        structs = file.structs,
+        traits = file.traits,
+        impls = file.impls,
         imports = file.imports,
         mangledPrefix = "",
     )
+
+    /**
+     * The structs a file can name: its own, the same-package ones, and the
+     * imported ones. A duplicate name in one package is a compile error.
+     */
+    private fun visibleStructs(fileScope: FileScope, program: Ast.Program): MutableMap<String, StructDecl> {
+        val visible = LinkedHashMap<String, StructDecl>()
+        fun add(decl: StructDecl) {
+            val prior = visible[decl.name]
+            if (prior != null && prior !== decl) {
+                throw SemaException("Duplicate struct ${decl.name}")
+            }
+            visible[decl.name] = decl
+        }
+        program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
+            .forEach { other -> other.structs.forEach { add(it) } }
+        fileScope.structs.forEach { add(it) }
+        fileScope.imports.forEach { import ->
+            val path = import.path
+            val imported = if (path.endsWith(".*")) {
+                val packageName = path.removeSuffix(".*")
+                program.files.filter { it.packageName == packageName }.flatMap { it.structs }
+            } else {
+                val separator = path.lastIndexOf('.')
+                if (separator < 0) emptyList() else {
+                    val packageName = path.substring(0, separator)
+                    val name = path.substring(separator + 1)
+                    program.files.filter { it.packageName == packageName }
+                        .flatMap { it.structs }
+                        .filter { it.name == name }
+                }
+            }
+            imported.forEach { visible.putIfAbsent(it.name, it) }
+        }
+        return visible
+    }
+
+    /**
+     * The traits a file can name: its own, the same-package ones, and the
+     * imported ones. A duplicate name in one package is a compile error.
+     */
+    private fun visibleTraits(fileScope: FileScope, program: Ast.Program): MutableMap<String, TraitDecl> {
+        val visible = LinkedHashMap<String, TraitDecl>()
+        fun add(decl: TraitDecl) {
+            val prior = visible[decl.name]
+            if (prior != null && prior !== decl) {
+                throw SemaException("Duplicate trait ${decl.name}")
+            }
+            visible[decl.name] = decl
+        }
+        program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
+            .forEach { other -> other.traits.forEach { add(it) } }
+        fileScope.traits.forEach { add(it) }
+        fileScope.imports.forEach { import ->
+            val path = import.path
+            val imported = if (path.endsWith(".*")) {
+                val packageName = path.removeSuffix(".*")
+                program.files.filter { it.packageName == packageName }.flatMap { it.traits }
+            } else {
+                val separator = path.lastIndexOf('.')
+                if (separator < 0) emptyList() else {
+                    val packageName = path.substring(0, separator)
+                    val name = path.substring(separator + 1)
+                    program.files.filter { it.packageName == packageName }
+                        .flatMap { it.traits }
+                        .filter { it.name == name }
+                }
+            }
+            imported.forEach { visible.putIfAbsent(it.name, it) }
+        }
+        return visible
+    }
+
+    /**
+     * Computes a struct's packed layout once. Fields are in declaration
+     * order, with no padding: the 6502 has no alignment requirement.
+     */
+    private fun prepareStruct(decl: StructDecl) {
+        if (!preparedStructs.add(decl)) return
+        if (decl.name in BUILTIN_TYPE_NAMES || decl.name == "CPU") {
+            throw SemaException("Struct name ${decl.name} is reserved")
+        }
+        if (decl.fields.isEmpty()) {
+            throw SemaException("Struct ${decl.name} must have at least one field")
+        }
+        decl.fieldOffsets.clear()
+        val seen = mutableSetOf<String>()
+        var offset = 0
+        for (field in decl.fields) {
+            if (!seen.add(field.name)) {
+                throw SemaException("Duplicate field ${field.name}", field.line)
+            }
+            if (field.location != null) {
+                throw SemaException("Struct field ${field.name} cannot have a fixed address", field.line)
+            }
+            if (field.isVal) {
+                throw SemaException("Struct field ${field.name} must be var", field.line)
+            }
+            if (field.init != null) {
+                throw SemaException("Struct field initialisers are not supported", field.line)
+            }
+            val type = field.declaredType
+                ?: throw SemaException("Struct field ${field.name} must declare a type", field.line)
+            if (!isStructFieldType(type)) {
+                throw SemaException("Struct field ${field.name} is not a scalar type: $type", field.line)
+            }
+            field.type = type
+            decl.fieldOffsets[field.name] = offset
+            offset += sizeOf(type)
+        }
+        if (offset > 65536) {
+            throw SemaException("Struct ${decl.name} does not fit in the 64 KiB address space")
+        }
+        decl.size = offset
+    }
+
+    private fun isStructFieldType(type: WolinType): Boolean = when (type.kind) {
+        TypeKind.UBYTE, TypeKind.BYTE, TypeKind.UWORD, TypeKind.WORD,
+        TypeKind.BOOL, TypeKind.FLOAT, TypeKind.STRING -> true
+        else -> false
+    }
+
+    /**
+     * Validates the traits and impls of one file and fills the program-wide
+     * method table. Runs before any body is checked: a call resolves against
+     * the table, wherever in the file order the callee is declared.
+     */
+    private fun prepareTraitsAndImpls(
+        fileScope: FileScope,
+        scopes: List<FileScope>,
+        program: Ast.Program,
+    ) {
+        fileImports = fileScope.imports
+        structTypes = visibleStructs(fileScope, program)
+        traitTypes = visibleTraits(fileScope, program)
+        (structTypes.keys intersect traitTypes.keys).firstOrNull()?.let { name ->
+            throw SemaException("Type name $name is both a struct and a trait")
+        }
+        traitTypes.values.forEach { checkTraitDecl(it) }
+        // Resolve every declaration's written type before any body is
+        // checked, so a file that reads another file's global sees a trait
+        // type, not a not-yet-retagged struct name. Locals are resolved when
+        // their statement is checked.
+        fileScope.globals.forEach { resolveType(it.type, it.line) }
+        fileScope.functions.forEach { fn ->
+            fn.params.forEach { resolveType(it.type) }
+            fn.retType?.let { resolveType(it) }
+        }
+
+        fileScope.impls.forEach { impl ->
+            val struct = structTypes[impl.structName]
+                ?: throw SemaException("Unknown struct ${impl.structName} in impl", impl.line)
+            val ownerFile = scopes.firstOrNull { scope ->
+                scope.structs.any { it === struct }
+            }
+            if (ownerFile !== fileScope) {
+                throw SemaException(
+                    "impl for ${struct.name} must be in the same file as the struct",
+                    impl.line,
+                )
+            }
+            val trait = impl.traitName?.let { name ->
+                traitTypes[name] ?: throw SemaException("Unknown trait $name", impl.line)
+            }
+            if (trait != null) {
+                val implemented = implementedTraits.getOrPut(struct) {
+                    java.util.Collections.newSetFromMap(
+                        java.util.IdentityHashMap<TraitDecl, Boolean>(),
+                    )
+                }
+                if (!implemented.add(trait)) {
+                    throw SemaException(
+                        "Duplicate impl of trait ${trait.name} for ${struct.name}",
+                        impl.line,
+                    )
+                }
+            }
+            impl.methods = effectiveMethods(impl, struct, trait)
+            if (trait != null) {
+                vtableInfos += Ast.VTableInfo(
+                    structName = struct.name,
+                    traitName = trait.name,
+                    prefix = fileScope.mangledPrefix,
+                    arity = impl.methods.size,
+                )
+            }
+            val table = methodsByStruct.getOrPut(struct) { LinkedHashMap() }
+            impl.methods.forEach { method ->
+                checkMethodSignature(method, struct)
+                if (struct.fields.any { it.name == method.name }) {
+                    throw SemaException(
+                        "Method ${method.name} collides with a field of ${struct.name}",
+                        impl.line,
+                    )
+                }
+                if (table.containsKey(method.name)) {
+                    throw SemaException(
+                        "Duplicate method ${method.name} in struct ${struct.name}",
+                        impl.line,
+                    )
+                }
+                val binding = MethodBinding(
+                    owner = struct.name,
+                    name = method.name,
+                    decl = method,
+                    prefix = fileScope.mangledPrefix,
+                    traitName = trait?.name,
+                )
+                table[method.name] = binding
+                methodBindings += binding
+            }
+        }
+    }
+
+    /** Rejects a trait declaration whose methods cannot be implemented statically. */
+    private fun checkTraitDecl(decl: TraitDecl) {
+        if (decl.name in BUILTIN_TYPE_NAMES || decl.name == "CPU") {
+            throw SemaException("Trait name ${decl.name} is reserved", decl.line)
+        }
+        val seen = mutableSetOf<String>()
+        for (method in decl.methods) {
+            if (!seen.add(method.name)) {
+                throw SemaException("Duplicate method ${method.name} in trait ${decl.name}", decl.line)
+            }
+            checkMethodSignature(method, null)
+        }
+    }
+
+    /** A method signature must fit the receiver-plus-scalars call ABI. */
+    private fun checkMethodSignature(method: FunDecl, struct: StructDecl?) {
+        if (method.fixedAddress != null) {
+            throw SemaException("Method ${method.name} cannot have a fixed address")
+        }
+        if (method.isInterrupt) {
+            throw SemaException("Method ${method.name} cannot be an interrupt handler")
+        }
+        method.params.forEach { param ->
+            resolveType(param.type)
+            if (param.location != null) {
+                throw SemaException("Method ${method.name} takes no register parameter ${param.name}")
+            }
+            if (param.type.kind == TypeKind.STRUCT) {
+                throw SemaException("A struct value is not first class: parameter ${param.name}")
+            }
+        }
+        method.retType?.let { ret ->
+            resolveType(ret)
+            if (ret.kind == TypeKind.STRUCT) {
+                throw SemaException("A struct value is not first class: return type")
+            }
+            if (ret.kind == TypeKind.TRAIT) {
+                throw SemaException("A trait value cannot be returned")
+            }
+        }
+        if (struct != null && method.isAbstract) {
+            throw SemaException("Method ${method.name} in impl for ${struct.name} needs a body")
+        }
+    }
+
+    /**
+     * The methods an impl actually provides: its own methods for an inherent
+     * impl, or exactly the trait's methods — an override where present, the
+     * default body otherwise — for a trait impl.
+     */
+    private fun effectiveMethods(impl: ImplDecl, struct: StructDecl, trait: TraitDecl?): List<FunDecl> {
+        val ownNames = mutableSetOf<String>()
+        impl.methods.forEach { method ->
+            if (!ownNames.add(method.name)) {
+                throw SemaException("Duplicate method ${method.name} in struct ${struct.name}", impl.line)
+            }
+        }
+        if (trait == null) {
+            return impl.methods.map { it.copy(owner = struct.name, traitName = null) }
+        }
+        val traitNames = trait.methods.map { it.name }.toSet()
+        impl.methods.firstOrNull { it.name !in traitNames }?.let { extra ->
+            throw SemaException(
+                "Trait ${trait.name} does not declare method ${extra.name}",
+                impl.line,
+            )
+        }
+        val ownByName = impl.methods.associateBy { it.name }
+        val effective = mutableListOf<FunDecl>()
+        for (traitMethod in trait.methods) {
+            val own = ownByName[traitMethod.name]
+            if (own == null) {
+                if (traitMethod.isAbstract) {
+                    throw SemaException(
+                        "Impl of trait ${trait.name} for ${struct.name} is missing method ${traitMethod.name}",
+                        impl.line,
+                    )
+                }
+                effective += traitMethod.copy(
+                    isAbstract = false,
+                    owner = struct.name,
+                    traitName = trait.name,
+                )
+            } else {
+                if (!sameSignature(traitMethod, own)) {
+                    throw SemaException(
+                        "Method ${own.name} does not match trait ${trait.name}: " +
+                            "expected ${signatureText(traitMethod)}, got ${signatureText(own)}",
+                        impl.line,
+                    )
+                }
+                effective += own.copy(owner = struct.name, traitName = trait.name)
+            }
+        }
+        return effective
+    }
+
+    private fun sameSignature(a: FunDecl, b: FunDecl): Boolean =
+        a.params.size == b.params.size &&
+            a.params.zip(b.params).all { (x, y) -> sameType(x.type, y.type) } &&
+            sameType(a.retType ?: Types.unit, b.retType ?: Types.unit)
+
+    private fun signatureText(method: FunDecl): String =
+        "fun ${method.name}(${method.params.joinToString(", ") { "${it.name}: ${it.type}" }})" +
+            (method.retType?.let { ": $it" } ?: "")
+
+
+    /**
+     * Resolves a named type against the visible declarations, retagging a
+     * trait name to [TypeKind.TRAIT] in place. Rejects a name no visible
+     * declaration provides.
+     */
+    private fun resolveType(type: WolinType, line: Int? = null) {
+        when (type.kind) {
+            TypeKind.STRUCT -> {
+                val name = type.structName
+                if (name != null && traitTypes.containsKey(name)) {
+                    type.kind = TypeKind.TRAIT
+                    type.traitName = name
+                    return
+                }
+                if (name == null || structTypes[name] == null) {
+                    throw SemaException("Unknown struct $name", line)
+                }
+            }
+            TypeKind.TRAIT -> {
+                val name = type.traitName
+                if (name == null || traitTypes[name] == null) {
+                    throw SemaException("Unknown trait $name", line)
+                }
+            }
+            TypeKind.ARRAY -> {
+                type.elementType?.let { resolveType(it, line) }
+                type.indexType?.let { resolveType(it, line) }
+            }
+            TypeKind.FUNCTION -> {
+                type.params.forEach { resolveType(it, line) }
+                type.retType?.let { resolveType(it, line) }
+            }
+            else -> Unit
+        }
+    }
+
+    /** The visible struct a type names, or null when the type is not a struct. */
+    private fun structDeclOf(type: WolinType): StructDecl? {
+        if (type.kind != TypeKind.STRUCT) return null
+        val name = type.structName ?: throw SemaException("Struct type has no name")
+        return structTypes[name] ?: throw SemaException("Unknown struct $name")
+    }
 
     /** Checks one file's declarations in its own scope. */
     private fun checkFile(fileScope: FileScope, program: Ast.Program) {
         val globals = Scope()
         scope = globals
         fileImports = fileScope.imports
+        structTypes = visibleStructs(fileScope, program)
+        traitTypes = visibleTraits(fileScope, program)
+        structTypes.values.forEach { globals.declare(it.name, Symbol.StructSymbol(it)) }
 
         // The file's own functions are visible everywhere inside it, so they
         // are declared before anything is checked — a call may name a
@@ -106,6 +516,9 @@ class TypeChecker {
             }
             val imported = import.path.substringAfterLast('.')
             if (imported.isEmpty() || imported == import.path) return@forEach
+            // A trait is not a value and is not declared in the value scope;
+            // it is resolved through [traitTypes] for impls.
+            if (traitTypes.containsKey(imported)) return@forEach
             val symbol = importResolver.resolve(imported, listOf(import), program)
                 ?: throw SemaException("Cannot resolve import ${import.path}")
             globals.declare(imported, symbol)
@@ -142,6 +555,9 @@ class TypeChecker {
             checkGlobal(global, fileScope, index, constSoFar, functionNames)
         }
         fileScope.functions.forEach { fn -> checkFunction(fn, globals) }
+        fileScope.impls.forEach { impl ->
+            impl.methods.forEach { method -> checkMethod(method, globals) }
+        }
     }
     // ---- declarations -----------------------------------------------------
 
@@ -162,7 +578,10 @@ class TypeChecker {
             }
         }
         val initType = global.init?.let { ini ->
-            if (ini is Ast.ArrayLiteral) {
+            if (declared?.kind == TypeKind.TRAIT) {
+                checkTraitValue(ini, declared)
+                declared
+            } else if (ini is Ast.ArrayLiteral) {
                 if (declared == null) throw SemaException("Array literal needs an array type")
                 if (declared?.kind != TypeKind.ARRAY) throw SemaException("${declared} is not an array type")
                 global.init = checkArrayInit(ini, declared)
@@ -172,14 +591,16 @@ class TypeChecker {
                 declared
             } else checkExpr(ini, declared)
         }
-        if (declared != null && initType != null && initType.kind != declared.kind) {
+        if (declared != null && initType != null && !sameType(initType, declared)) {
             throw SemaException("Attempt reassign $declared $initType")
         }
         val type = declared ?: initType
             ?: throw SemaException("Variable ${global.name} has no type!")
         global.type = type
+        resolveType(type, global.line)
+        validateArrayType(type, global.location, global.name, global.line)
         rejectCpuRegisterVariable(global.name, global.location, type, global.line)
-        if (global.init != null) {
+        if (global.init != null && type.kind != TypeKind.TRAIT) {
             global.constValue = ConstFolder.fold(global.init!!, constSoFar, functionNames)
                 ?: throw SemaException("global initialiser must be a constant expression")
         }
@@ -254,12 +675,29 @@ class TypeChecker {
                 throw SemaException("Return not allowed for interrupt function!")
             }
         }
+        fn.params.forEach { param ->
+            resolveType(param.type)
+            if (param.type.kind == TypeKind.STRUCT) {
+                throw SemaException("A struct value is not first class: parameter ${param.name}")
+            }
+        }
+        fn.retType?.let { ret ->
+            resolveType(ret)
+            if (ret.kind == TypeKind.STRUCT) {
+                throw SemaException("A struct value is not first class: return type")
+            }
+            if (ret.kind == TypeKind.TRAIT) {
+                throw SemaException("A trait value cannot be returned")
+            }
+        }
         if (fn.fixedAddress != null) checkFixedAddressFunction(fn)
         val outer = scope
         val functionScope = globals.child()
         scope = functionScope
         currentReturnType = fn.retType
         currentFunctionName = fn.name
+        val outerThis = currentThis
+        currentThis = null
         try {
             currentLabels = collectLabels(fn.body)
             fn.params.forEach { param ->
@@ -271,6 +709,54 @@ class TypeChecker {
             currentReturnType = null
             currentFunctionName = ""
             currentLabels = null
+            currentThis = outerThis
+        }
+    }
+
+    /**
+     * Checks one impl method. The receiver is not a parameter: `this` names
+     * the struct storage the caller passed, and field access is an ordinary
+     * member access on it.
+     */
+    private fun checkMethod(fn: FunDecl, globals: Scope) {
+        val ownerName = fn.owner
+            ?: throw SemaException("Method ${fn.name} has no struct")
+        val struct = structTypes[ownerName]
+            ?: throw SemaException("Unknown struct $ownerName")
+        fn.params.forEach { param ->
+            resolveType(param.type)
+            if (param.type.kind == TypeKind.STRUCT) {
+                throw SemaException("A struct value is not first class: parameter ${param.name}")
+            }
+        }
+        fn.retType?.let { ret ->
+            resolveType(ret)
+            if (ret.kind == TypeKind.STRUCT) {
+                throw SemaException("A struct value is not first class: return type")
+            }
+            if (ret.kind == TypeKind.TRAIT) {
+                throw SemaException("A trait value cannot be returned")
+            }
+        }
+        val outer = scope
+        val methodScope = globals.child()
+        scope = methodScope
+        currentReturnType = fn.retType
+        currentFunctionName = fn.name
+        val outerThis = currentThis
+        currentThis = struct
+        try {
+            currentLabels = collectLabels(fn.body)
+            fn.params.forEach { param ->
+                methodScope.declare(param.name, Symbol.DataSymbol(param.type, param.location, null))
+            }
+            fn.body.forEach { checkStmt(it) }
+        } finally {
+            scope = outer
+            currentReturnType = null
+            currentFunctionName = ""
+            currentLabels = null
+            currentThis = outerThis
         }
     }
 
@@ -373,9 +859,13 @@ class TypeChecker {
         when (stmt) {
             is LocalDecl -> {
                 val declared = stmt.declaredType
+                declared?.let { resolveType(it, stmt.line) }
                 val init = stmt.init
                 val initType = init?.let { ini ->
-                    if (ini is Ast.ArrayLiteral) {
+                    if (declared?.kind == TypeKind.TRAIT) {
+                        checkTraitValue(ini, declared)
+                        declared
+                    } else if (ini is Ast.ArrayLiteral) {
                         if (declared == null) throw SemaException("Array literal needs an array type")
                         if (declared?.kind != TypeKind.ARRAY) throw SemaException("${declared} is not an array type")
                         if (stmt.location !is FixedArray) {
@@ -391,12 +881,17 @@ class TypeChecker {
                         declared
                     } else checkExpr(ini, declared)
                 }
-                if (declared != null && initType != null && initType.kind != declared.kind) {
+                if (declared != null && initType != null && !sameType(initType, declared)) {
                     throw SemaException("Attempt reassign $declared $initType")
                 }
                 val type = declared ?: initType
                     ?: throw SemaException("Variable ${stmt.name} has no type!")
                 stmt.type = type
+                resolveType(type, stmt.line)
+                if (type.kind == TypeKind.ARRAY && stmt.location !is FixedArray) {
+                    throw SemaException("local arrays need a fixed address in v1", stmt.line)
+                }
+                validateArrayType(type, stmt.location, stmt.name, stmt.line)
                 rejectCpuRegisterVariable(stmt.name, stmt.location, type, stmt.line)
                 scope.declare(stmt.name, Symbol.DataSymbol(type, stmt.location, stmt.init, stmt.isVal))
             }
@@ -436,7 +931,7 @@ class TypeChecker {
                     if (expected == null) {
                         throw SemaException("Unit function $currentFunctionName has no return type")
                     }
-                    if (valueType.kind != expected.kind) {
+                    if (!sameType(valueType, expected)) {
                         throw SemaException("Attempt reassign $expected $valueType")
                     }
                 }
@@ -548,7 +1043,7 @@ class TypeChecker {
         if (expr.entries.none { it.isElse }) {
             throw SemaException("this when expression may not match any branch")
         }
-        expr.type = if (branchTypes.all { it.kind == branchTypes.firstOrNull()?.kind }) {
+        expr.type = if (branchTypes.all { sameType(it, branchTypes.firstOrNull() ?: Types.unit) }) {
             branchTypes.firstOrNull() ?: Types.unit
         } else {
             Types.unit
@@ -638,11 +1133,14 @@ class TypeChecker {
      */
     private fun checkArrayInit(init: Expr, type: WolinType?): Expr {
         val ety = type?.elementType ?: throw SemaException("Array literal needs an array type")
-        val ity = type.indexType ?: Types.ubyte
+        if (ety.kind == TypeKind.STRUCT) {
+            throw SemaException("Struct array initialisers are not supported")
+        }
+        val length = arrayLength(type)
         val elements: List<Expr> = when (init) {
             is Ast.ArrayLiteral -> {
-                if (init.elements.size > arrayDomain(ity)) {
-                    throw SemaException("Too many array elements: ${init.elements.size} for a ${ity} index")
+                if (init.elements.size > length) {
+                    throw SemaException("Too many array elements: ${init.elements.size} for a $length-element array")
                 }
                 init.elements.forEach { e ->
                     checkExpr(e, ety)
@@ -654,8 +1152,8 @@ class TypeChecker {
                     throw SemaException("String initialiser needs a ubyte element type")
                 }
                 val bytes = init.bytes
-                if (bytes.size + 1 > arrayDomain(ity)) {
-                    throw SemaException("String initialiser too long: ${bytes.size + 1} for a ${ity} index")
+                if (bytes.size + 1 > length) {
+                    throw SemaException("String initialiser too long: ${bytes.size + 1} for a $length-element array")
                 }
                 bytes.map { IntLit(it.toLong(), ety) } + IntLit(0, ety)
             }
@@ -664,7 +1162,12 @@ class TypeChecker {
         return Ast.ArrayLiteral(elements, type!!)
     }
 
-    private fun checkExpr(expr: Expr, expected: WolinType?): WolinType = when (expr) {
+    /**
+     * Checks an expression. A struct-typed expression is not a value: only a
+     * member access may ask for one ([allowStruct]) and then read a field.
+     */
+    private fun checkExpr(expr: Expr, expected: WolinType?, allowStruct: Boolean = false): WolinType {
+        val type = when (expr) {
         is IntLit -> literalType(expr.value, expected).also { expr.type = it }
         is RealLit -> Types.float.also { expr.type = it }
         is BoolLit -> Types.bool.also { expr.type = it }
@@ -673,6 +1176,7 @@ class TypeChecker {
         is StringTemplate -> checkStringTemplate(expr)
         is NullLit -> WolinType(TypeKind.UNIT, nullable = true).also { expr.type = it }
         is VarRef -> checkVarRef(expr)
+        is ThisRef -> checkThis(expr)
         is UnaryOp -> checkUnary(expr, expected)
         is BinaryOp -> checkBinary(expr)
         is Assign -> checkAssign(expr)
@@ -681,8 +1185,14 @@ class TypeChecker {
         is IfExpr -> checkIfExpr(expr, expected)
         is WhenExpr -> checkWhenExpr(expr, expected)
         is ArrayAccess -> checkArrayAccess(expr)
+        is MemberAccess -> checkMemberAccess(expr)
         is Convert -> checkConvert(expr)
         is ArrayLiteral -> throw SemaException("Array literal can only initialise a declaration")
+        }
+        if (type.kind == TypeKind.STRUCT && !allowStruct) {
+            throw SemaException("A struct value is not first class")
+        }
+        return type
     }
 
     /**
@@ -742,8 +1252,18 @@ class TypeChecker {
             is Symbol.DataSymbol -> expr.type = symbol.type
             // A function name used as a value is its address, which is a `uword`.
             is Symbol.FunSymbol -> expr.type = Types.uword
+            is Symbol.StructSymbol ->
+                throw SemaException("Struct ${symbol.decl.name} is a type, not a value")
         }
         resolved[expr] = symbol
+        return expr.type
+    }
+
+    /** `this` is the receiver storage of the impl method being checked. */
+    private fun checkThis(expr: ThisRef): WolinType {
+        val struct = currentThis
+            ?: throw SemaException("this is only available in an impl method")
+        expr.type = Types.struct(struct.name)
         return expr.type
     }
 
@@ -809,16 +1329,19 @@ class TypeChecker {
 
         // A literal takes the type of the operand it is combined with, so
         // `uwordValue + 1` is a `uword` operation and not a type mismatch.
+        // A bitmask is a bit pattern, so it may use the operand's full
+        // width: `wordValue & 0xFF00` keeps the high byte.
+        val bitwise = expr.op == "&" || expr.op == "|" || expr.op == "xor"
         val leftType: WolinType
         val rightType: WolinType
         when {
             left is IntLit && right !is IntLit && right !is RealLit -> {
                 rightType = checkExpr(right, null)
-                leftType = checkExpr(left, rightType)
+                leftType = checkContextualIntLiteral(left, rightType, bitwise)
             }
             right is IntLit && left !is IntLit && left !is RealLit -> {
                 leftType = checkExpr(left, null)
-                rightType = checkExpr(right, leftType)
+                rightType = checkContextualIntLiteral(right, leftType, bitwise)
             }
             isContextualIntLiteral(right) && !isContextualIntLiteral(left) && left !is RealLit -> {
                 leftType = checkExpr(left, null)
@@ -834,6 +1357,9 @@ class TypeChecker {
             }
         }
 
+        if (leftType.kind == TypeKind.TRAIT || rightType.kind == TypeKind.TRAIT) {
+            throw SemaException("Operator ${expr.op} is not defined for trait values")
+        }
         when (expr.op) {
             "&&", "||" -> {
                 requireBool(leftType, expr.op)
@@ -911,15 +1437,59 @@ class TypeChecker {
                     throw SemaException("Array index must be an integer, not $indexType")
                 }
                 target.type = arrayType.elementType ?: Types.unit
+                if (target.type.kind == TypeKind.STRUCT) {
+                    throw SemaException("Cannot assign a struct value; assign a field instead")
+                }
 
                 checkAssignedValue(expr, target.type)
                 expr.type = target.type
+            }
+
+            is MemberAccess -> {
+                val receiverType = checkExpr(target.receiver, null, allowStruct = true)
+                val owner = structDeclOf(receiverType)
+                    ?: throw SemaException("Cannot access member ${target.name} of $receiverType")
+                val field = owner.fields.firstOrNull { it.name == target.name }
+                    ?: throw SemaException("Unknown field ${target.name} in ${owner.name}")
+                target.owner = owner
+                target.type = field.type
+                checkAssignedValue(expr, field.type)
+                expr.type = field.type
             }
 
             else -> throw SemaException("Invalid assignment target")
         }
         return expr.type
     }
+
+    /**
+     * Checks a value assigned to a trait-typed storage: either another trait
+     * value of the same trait, or a struct that implements the trait.
+     */
+    private fun checkTraitValue(value: Expr, target: WolinType) {
+        val traitName = target.traitName
+            ?: throw SemaException("Trait type has no name")
+        val valueType = checkExpr(value, null, allowStruct = true)
+        when (valueType.kind) {
+            TypeKind.TRAIT -> {
+                if (valueType.traitName != traitName) {
+                    throw SemaException("Attempt reassign $target $valueType")
+                }
+            }
+            TypeKind.STRUCT -> {
+                val owner = structDeclOf(valueType)
+                    ?: throw SemaException("Unknown struct $valueType")
+                if (!implementsTrait(owner, traitName)) {
+                    throw SemaException("Struct ${owner.name} does not implement trait $traitName")
+                }
+            }
+            else -> throw SemaException("Attempt reassign $target $valueType")
+        }
+    }
+
+    /** Whether [struct] has an `impl Struct : Trait` for [traitName]. */
+    private fun implementsTrait(struct: StructDecl, traitName: String): Boolean =
+        implementedTraits[struct]?.any { it.name == traitName } == true
 
     /**
      * Checks the value of an assignment against the target's type, according to
@@ -934,10 +1504,17 @@ class TypeChecker {
      *   need not have the target's type; it only has to fit the target's width.
      */
     private fun checkAssignedValue(expr: Assign, targetType: WolinType) {
+        if (targetType.kind == TypeKind.TRAIT) {
+            if (expr.op != "=") {
+                throw SemaException("Operator ${expr.op} is not defined for $targetType")
+            }
+            checkTraitValue(expr.value, targetType)
+            return
+        }
         when (expr.op) {
             "=" -> {
                 val valueType = checkExpr(expr.value, targetType)
-                if (valueType.kind != targetType.kind) {
+                if (!sameType(valueType, targetType)) {
                     throw SemaException("Attempt reassign $targetType $valueType")
                 }
             }
@@ -949,7 +1526,7 @@ class TypeChecker {
                 // literal — that would be a promotion, and there is none.
                 val expected = if (targetType.isInteger) targetType else null
                 val valueType = checkExpr(expr.value, expected)
-                if (valueType.kind != targetType.kind) {
+                if (!sameType(valueType, targetType)) {
                     throw SemaException("Attempt reassign $targetType $valueType")
                 }
             }
@@ -974,12 +1551,39 @@ class TypeChecker {
 
     private fun checkCall(expr: Call, expected: WolinType?): WolinType {
         val callee = expr.callee
+        if (callee is MemberAccess) {
+            val receiverType = checkExpr(callee.receiver, null, allowStruct = true)
+            if (receiverType.kind == TypeKind.TRAIT) {
+                val trait = traitTypes[receiverType.traitName]
+                    ?: throw SemaException("Unknown trait ${receiverType.traitName}")
+                val slot = trait.methods.indexOfFirst { it.name == callee.name }
+                if (slot < 0) {
+                    throw SemaException("Trait ${trait.name} has no method ${callee.name}")
+                }
+                val method = trait.methods[slot]
+                checkCallArgs(expr, callee.name, method.params)
+                expr.traitSlot = slot
+                expr.type = method.retType ?: Types.unit
+                return expr.type
+            }
+            val owner = structDeclOf(receiverType)
+                ?: throw SemaException("Unsupported construct: member call ${callee.name}")
+            val binding = methodsByStruct[owner]?.get(callee.name)
+                ?: throw SemaException("Struct ${owner.name} has no method ${callee.name}")
+            checkCallArgs(expr, callee.name, binding.decl.params)
+            expr.resolvedMethod = binding.decl
+            expr.methodPrefix = binding.prefix
+            expr.type = binding.decl.retType ?: Types.unit
+            return expr.type
+        }
         if (callee !is VarRef) {
             throw SemaException("Unsupported call target")
         }
         val symbol = lookup(callee.name)
             ?: throw SemaException("Unknown function ${callee.name}")
         when (symbol) {
+            is Symbol.StructSymbol ->
+                throw SemaException("Struct ${symbol.decl.name} is a type, not a function")
             is Symbol.FunSymbol -> {
                 resolved[callee] = symbol
                 callee.type = functionTypeOf(symbol.decl)
@@ -1007,7 +1611,7 @@ class TypeChecker {
                     }
                     expr.args.forEachIndexed { index, argument ->
                         val argumentType = checkExpr(argument, params[index])
-                        if (argumentType.kind != params[index].kind) {
+                        if (!sameType(argumentType, params[index])) {
                             throw SemaException(
                                 "Attempt reassign ${params[index]} $argumentType"
                             )
@@ -1036,7 +1640,7 @@ class TypeChecker {
         }
         expr.args.forEachIndexed { index, argument ->
             val argumentType = checkExpr(argument, params[index].type)
-            if (argumentType.kind != params[index].type.kind) {
+            if (!sameType(argumentType, params[index].type)) {
                 throw SemaException("Attempt reassign ${params[index].type} $argumentType")
             }
         }
@@ -1053,6 +1657,9 @@ class TypeChecker {
         scope = literalScope
         val outerLabels = currentLabels
         currentLabels = collectLabels(expr.body)
+        val outerThis = currentThis
+        currentThis = null
+        val outerReturnType = currentReturnType
         try {
             expr.params.forEachIndexed { index, name ->
                 literalScope.declare(name, Symbol.DataSymbol(paramTypes[index], null, null))
@@ -1064,13 +1671,15 @@ class TypeChecker {
             val last = expr.body.lastOrNull()
             if (last is ExprStmt && retType.kind != TypeKind.UNIT) {
                 val valueType = last.expr.type
-                if (valueType.kind != retType.kind) {
+                if (!sameType(valueType, retType)) {
                     throw SemaException("Attempt reassign $retType $valueType")
                 }
             }
         } finally {
             scope = outer
             currentLabels = outerLabels
+            currentThis = outerThis
+            currentReturnType = outerReturnType
         }
         expr.type = WolinType(
             TypeKind.FUNCTION,
@@ -1084,7 +1693,7 @@ class TypeChecker {
         requireBool(checkExpr(expr.cond, null), "if")
         val thenType = checkBranch(expr.then, expected)
         val elseType = checkBranch(expr.otherwise, expected)
-        expr.type = if (thenType.kind == elseType.kind) thenType else Types.unit
+        expr.type = if (sameType(thenType, elseType)) thenType else Types.unit
         return expr.type
     }
 
@@ -1104,6 +1713,17 @@ class TypeChecker {
         return expr.type
     }
 
+    private fun checkMemberAccess(expr: MemberAccess): WolinType {
+        val receiverType = checkExpr(expr.receiver, null, allowStruct = true)
+        val owner = structDeclOf(receiverType)
+            ?: throw SemaException("Cannot access member ${expr.name} of $receiverType")
+        val field = owner.fields.firstOrNull { it.name == expr.name }
+            ?: throw SemaException("Unknown field ${expr.name} in ${owner.name}")
+        expr.owner = owner
+        expr.type = field.type
+        return expr.type
+    }
+
     /**
      * An explicit conversion: the operand must be an integer, the result is the
      * named target type. This is the only way a value changes integer type —
@@ -1120,6 +1740,47 @@ class TypeChecker {
 
     // ---- type rules -------------------------------------------------------
 
+    /**
+     * Checks an explicit array count against the index type and the address
+     * space. Domain-sized arrays keep their historical sizing (and are not
+     * capped here); an explicit count is a promise the compiler can check.
+     */
+    private fun validateArrayType(type: WolinType, location: Location?, name: String, line: Int?) {
+        if (type.kind != TypeKind.ARRAY) return
+        val element = type.elementType ?: throw SemaException("Array $name has no element type", line)
+        // A domain-sized scalar array keeps its historical sizing. A struct
+        // or trait array is checked even without an explicit count: its
+        // elements are larger than one byte.
+        if (type.count == null &&
+            element.kind != TypeKind.STRUCT && element.kind != TypeKind.TRAIT
+        ) return
+        val indexType = type.indexType ?: Types.ubyte
+        val length = arrayLength(type)
+        if (length < 1) throw SemaException("Array length must be at least 1", line)
+        val domain = arrayDomain(indexType)
+        if (length > domain) {
+            throw SemaException(
+                "Array length $length exceeds the $indexType index range $domain",
+                line,
+            )
+        }
+        val bytes = length.toLong() * typeSize(element)
+        if (bytes > 65536) {
+            throw SemaException("Array $name does not fit in the 64 KiB address space", line)
+        }
+        if (location is FixedArray && location.address.toLong() + bytes > 65536) {
+            throw SemaException("Array $name does not fit in the 64 KiB address space", line)
+        }
+    }
+
+    /** The size in bytes of a storage type (a scalar or a struct). */
+    private fun typeSize(type: WolinType): Int = when (type.kind) {
+        TypeKind.STRUCT -> structDeclOf(type)?.size ?: 0
+        TypeKind.TRAIT -> 4
+        TypeKind.ARRAY -> arrayLength(type) * typeSize(type.elementType ?: Types.ubyte)
+        else -> sizeOf(type)
+    }
+
     /** The index type's domain: 256 for `ubyte`/`byte`, 65536 for `uword`/`word`. */
     private fun arrayDomain(indexType: WolinType): Int =
         if (indexType.kind == TypeKind.UWORD || indexType.kind == TypeKind.WORD) 65536 else 256
@@ -1127,16 +1788,31 @@ class TypeChecker {
     /**
      * The type of an integer literal: the expected type when the context
      * supplies one, the smallest type that holds the value otherwise.
+     *
+     * [allowWidth] admits the value as a bit pattern of the expected type's
+     * width, so a signed `word` accepts `0xFF00` as a mask.
      */
-    private fun literalType(value: Long, expected: WolinType?): WolinType {
+    private fun literalType(
+        value: Long,
+        expected: WolinType?,
+        allowWidth: Boolean = false,
+    ): WolinType {
         if (expected != null && (expected.isInteger || expected.kind == TypeKind.FLOAT)) {
-            if (expected.isInteger && !fits(value, expected)) {
+            val fitsExpected = if (allowWidth) fitsWidth(value, expected) else fits(value, expected)
+            if (expected.isInteger && !fitsExpected) {
                 throw SemaException("Value out of range")
             }
             return expected
         }
         return smallestType(value)
     }
+
+    /** Types an [IntLit] against its operand; [allowWidth] is for bit masks. */
+    private fun checkContextualIntLiteral(
+        expr: IntLit,
+        expected: WolinType,
+        allowWidth: Boolean,
+    ): WolinType = literalType(expr.value, expected, allowWidth).also { expr.type = it }
 
     /** The smallest type that holds `value`. */
     private fun smallestType(value: Long): WolinType = when {
@@ -1157,7 +1833,7 @@ class TypeChecker {
     }
 
     /**
-     * Whether `value` fits into the *width* of `type`. A bit mask is a bit
+     * Whether [value] fits into the *width* of [type]. A bit mask is a bit
      * pattern, so `0xFF` fits an `ubyte` even though it does not fit a
      * `byte`.
      */

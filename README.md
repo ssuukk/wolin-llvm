@@ -16,6 +16,7 @@ parser is ANTLR, the type checker and the emitter are plain Kotlin.
 | **Gradle** | the build | `./gradlew` |
 | **LLVM-MOS SDK** | `mos-c64-clang`: validates the IR and links the `.prg` | `~/.local/share/rust-mos/sdk-*/` |
 | **VICE** (`x64sc`) | only for the integration tests, which run real 6502 code | `x64sc` on `PATH` |
+| **Xvfb** (`xvfb-run`) | runs VICE headless, so tests do not open windows | `xvfb-run` on `PATH` |
 
 The SDK is found under `~/.local/share/rust-mos`; `-S <dir>` overrides the
 search.
@@ -86,6 +87,7 @@ a name from another package resolves through an import.
 | `float` | `float` | 4 bytes, IEEE-754 |
 | `string` | `ptr i8` | NUL-terminated |
 | `ubyte[ubyte]` | `ptr` | array; the index type is part of the type |
+| `ubyte[ubyte, 16]` | `ptr` | array with an explicit length; `ubyte[16]` uses a `ubyte` index |
 
 A declaration without a type takes the type of its initialiser. A declaration
 with neither a type nor an initialiser is an error.
@@ -96,8 +98,15 @@ with neither a type nor an initialiser is an error.
 var x: ubyte                  // local, a stack slot
 var x: ubyte^0xd020           // fixed-address variable: direct loads and stores
 var x: bool^CPU.I             // CPU-register-backed variable
-var arr: ubyte[ubyte]         // array in the data section
-var arr: ubyte[ubyte]^0x3000  // array at a fixed address
+var arr: ubyte[ubyte] // array in the data section, 256 elements
+var arr: ubyte[ubyte, 16] // 16 elements; `ubyte[16]` is the same
+var arr: ubyte[ubyte]^0x3000 // array at a fixed address
+struct Point { var x: ubyte; var y: uword } // packed layout
+var p: Point // global struct instance
+var points: Point[ubyte, 4] // array of structs, contiguous
+trait Sum { fun sum(): uword } // method contract, no state
+impl Point { fun bump() { this.x++ } } // inherent method
+impl Point : Sum { fun sum(): uword { return this.x.toUword() + this.y } } // static impl
 val x: ubyte = 5              // cannot be assigned to
 fun f(): ubyte { ... }        // function
 interrupt fun handler() { }   // 6502 interrupt handler
