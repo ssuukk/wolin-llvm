@@ -734,6 +734,10 @@ wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk myprog.w
   `backgroundColor0`–`backgroundColor3`, `spriteColor0`–`spriteColor7`
   and friends. A read fetches the register, a write stores it; the two
   read-only collision registers are declared `val`.
+  The file also declares the enums that name the register values:
+  `Color` (the 16 palette values), `SpriteMask` (bit 7-n selects sprite n),
+  `InterruptSource` and `InterruptFlag` (the IRQEN and IRQST bits),
+  `Control1` and `Control2` (the bits of $d011 and $d016).
 
 ```wtk
 package app

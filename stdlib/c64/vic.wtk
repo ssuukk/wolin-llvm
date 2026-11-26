@@ -106,7 +106,7 @@ var backgroundColor3: ubyte^0xd024
 var multicolorBackground0: ubyte^0xd025
 var multicolorBackground1: ubyte^0xd026
 
-// Sprite colors 0-7.
+// Sprites 0-7 colors.
 var spriteColor0: ubyte^0xd027
 var spriteColor1: ubyte^0xd028
 var spriteColor2: ubyte^0xd029
@@ -115,3 +115,108 @@ var spriteColor4: ubyte^0xd02b
 var spriteColor5: ubyte^0xd02c
 var spriteColor6: ubyte^0xd02d
 var spriteColor7: ubyte^0xd02e
+
+// --- Enums ---
+
+// The 16 VIC-II palette values, in bits 3-0 of every colour register:
+// border, background 0-3, the multicolor background pair, sprite 0-7 and
+// the sprite colour pair of multicolor sprites.
+//
+// A colour register holds the value in its low nibble; the upper nibble is
+// unused and reads back as 1, so a read has to be masked with 0x0f.
+// `Color` is a ubyte alias, so it can be written straight into a colour
+// register or used as an index.
+enum Color {
+    BLACK = 0,
+    WHITE = 1,
+    RED = 2,
+    CYAN = 3,
+    PINK = 4,
+    GREEN = 5,
+    BLUE = 6,
+    YELLOW = 7,
+    ORANGE = 8,
+    BROWN = 9,
+    LIGHT_RED = 10,
+    DARK_GRAY = 11,
+    MEDIUM_GRAY = 12,
+    LIGHT_GREEN = 13,
+    LIGHT_BLUE = 14,
+    LIGHT_GRAY = 15
+}
+
+// A sprite mask: bit 7-n selects sprite n. The same mask goes into
+// spriteEnable, spriteDataPriority, spriteMulticolor, spriteXExpansion
+// and spriteYExpansion; spriteXHigh uses bit n instead of bit 7-n.
+//
+// A mask is built by ORing the bits of the sprites in it, so the values are
+// single-bit masks to be combined, not numbers to store.
+enum SpriteMask {
+    SPRITE0 = 0x80,
+    SPRITE1 = 0x40,
+    SPRITE2 = 0x20,
+    SPRITE3 = 0x10,
+    SPRITE4 = 0x08,
+    SPRITE5 = 0x04,
+    SPRITE6 = 0x02,
+    SPRITE7 = 0x01
+}
+
+// The interrupt sources of interruptEnable (IRQEN): bit 1 ERST (raster),
+// bit 2 EMBC (sprite-background), bit 3 EMMC (sprite-sprite). Write the bit
+// to enable a source, 0 to disable it.
+//
+// The register has only those three bits on the 6567/6569: the light pen
+// interrupt (bit 4, ELP) was dropped with the light pen, and the other
+// bits are not implemented and read back as 1. A read therefore has to be
+// masked with 0x0e.
+enum InterruptSource {
+    SPRITE_COLLISION = 0x08,
+    SPRITE_BACKGROUND = 0x04,
+    RASTER = 0x02
+}
+
+// The interrupt flags of interruptStatus (IRQST): bit 1 IRST (raster),
+// bit 2 IMBC (sprite-background), bit 3 IMMC (sprite-sprite), bit 7 IRQ
+// (the master flag; writing 0 clears it).
+//
+// The flag bits and the enable bits are the same positions: a raster
+// interrupt is bit 1 in both registers, and the collision sources are bits
+// 2 and 3 in both. Only IRQ (bit 7, the master flag) is unique to the
+// status register.
+//
+// The light pen flag (bit 4, ILP) was dropped with the light pen; like the
+// unimplemented enable bits, it reads back as 1.
+enum InterruptFlag {
+    IRQ = 0x80,
+    SPRITE_COLLISION = 0x08,
+    SPRITE_BACKGROUND = 0x04,
+    RASTER = 0x02
+}
+
+// The bits of controlRegister1 ($d011): bit 7 RST8 (the high bit of the
+// raster comparison line), bit 6 ECM (external colour matrix), bit 5 BMM
+// (bitmap mode), bit 4 DEN (display enable), bits 3-1 RSEL (the row
+// select), bits 2-0 YSCROLL (the fine vertical scroll).
+//
+// Bit 7 is the high bit of the raster comparison line, and the register is
+// only 8 bits wide on a 6567, so the bit is not implemented and reads 1.
+// Mask it off (0x7f) when the other bits are what matters.
+enum Control1 {
+    RST8 = 0x80,
+    ECM = 0x40,
+    BMM = 0x20,
+    DEN = 0x10,
+    RSEL = 0x08,
+    YSCROLL = 0x07
+}
+
+// The bits of controlRegister2 ($d016): bit 5 RES (unused on the
+// 6567/6569), bit 4 MCM (multicolour mode), bit 3 CSEL (the column
+// select), bits 2-0 XSCROLL (the fine horizontal scroll).
+enum Control2 {
+    RES = 0x20,
+    MCM = 0x10,
+    CSEL = 0x08,
+    XSCROLL = 0x07
+}
