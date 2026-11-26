@@ -708,11 +708,11 @@ fun main() {
 
 ## Standard library
 
-Three files ship in `stdlib/`; pass the ones you use on the command
+Four files ship in `stdlib/`; pass the ones you use on the command
 line before your own files:
 
 ```
-wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk myprog.wtk -o myprog.prg
+wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/c64/sid.wtk stdlib/wolin/screen.wtk myprog.wtk -o myprog.prg
 ```
 
 - `c64/kernal.wtk` (`package c64.kernal`) — kernal entry points as
@@ -738,6 +738,15 @@ wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk myprog.w
   `Color` (the 16 palette values), `SpriteMask` (bit 7-n selects sprite n),
   `InterruptSource` and `InterruptFlag` (the IRQEN and IRQST bits),
   `Control1` and `Control2` (the bits of $d011 and $d016).
+- `c64/sid.wtk` (`package c64.sid`) — the SID register map ($d400-$d41f) as
+  fixed-address `ubyte` windows: the three voices (frequency, pulse width,
+  control, envelope), the filter (cutoff, resonance and routing, mode and
+  volume), and the read-only oscillator and envelope outputs. The file also
+  declares the enums that name the register values: `Waveform` (the
+  waveform bits of a voice control register), `VoiceControl` (its TEST, RING,
+  SYNC and GATE bits), `FilterRouting` (which voices the filter takes),
+  `FilterMode` (the lowpass, bandpass, highpass and voice-3-off bits) and
+  `Volume` (the sixteen master volume steps).
 
 ```wtk
 package app

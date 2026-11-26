@@ -157,6 +157,11 @@ java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt \
     examples/petscii.wtk -o petscii.prg
 ```
 
+The stdlib ships `c64/kernal.wtk` (the KERNAL entry points),
+`c64/vic.wtk` (the VIC-II registers and the enums that name their
+values), `c64/sid.wtk` (the SID registers and their enums) and
+`wolin/screen.wtk` (screen output).
+
 - `hello.wtk` — print text, then cycle the border and background through
   all 16 palette colours.
 - `sprites.wtk` — move a 1-colour and a multicolour sprite.

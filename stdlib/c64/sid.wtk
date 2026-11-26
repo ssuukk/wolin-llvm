@@ -1,0 +1,173 @@
+package c64.sid
+
+// SID (MOS 6581 / 8580) register map, $d400-$d41f.
+//
+// Each name is a fixed-address `ubyte` window on one register: a read
+// fetches the register, a write stores it. The register block repeats
+// every 32 bytes in $d400-$d7ff (incomplete address decoding); these
+// point at the canonical $d400 block.
+//
+// Register bits follow the MOS 6581 datasheet and the ReSID engine VICE
+// embeds (src/resid): the voice control register is waveform << 4 | TEST
+// | RING | SYNC | GATE, the filter control register is RES in bits 7-4 and
+// the routing in bits 3-0, and the mode/volume register is the mode in
+// bits 7-4 and the volume in bits 3-0.
+
+// --- Voice 1: frequency, pulse width, control, envelope ---
+
+// Voice 1 frequency, low byte; the high 4 bits are in voice1FrequencyHigh.
+var voice1FrequencyLow: ubyte^0xd400
+
+// Voice 1 frequency, high bits 0-2. The frequency is a 12-bit value, so
+// the register holds three bits of it.
+var voice1FrequencyHigh: ubyte^0xd401
+
+// Voice 1 pulse width, low byte; the high 4 bits are in
+// voice1PulseWidthHigh.
+var voice1PulseWidthLow: ubyte^0xd402
+
+// Voice 1 pulse width, high bits 4-7. The pulse width is a 12-bit value,
+// so the register holds four bits of it; bits 0-3 are not used.
+var voice1PulseWidthHigh: ubyte^0xd403
+
+// Voice 1 control: the waveform in bits 7-4, then TEST, RING, SYNC and
+// GATE in bits 3-0.
+var voice1Control: ubyte^0xd404
+
+// Voice 1 envelope: attack in bits 7-4, decay in bits 3-0.
+var voice1AttackDecay: ubyte^0xd405
+
+// Voice 1 envelope: sustain in bits 7-4, release in bits 3-0.
+var voice1SustainRelease: ubyte^0xd406
+
+// --- Voice 2 ---
+
+var voice2FrequencyLow: ubyte^0xd407
+var voice2FrequencyHigh: ubyte^0xd408
+var voice2PulseWidthLow: ubyte^0xd409
+var voice2PulseWidthHigh: ubyte^0xd40a
+var voice2Control: ubyte^0xd40b
+var voice2AttackDecay: ubyte^0xd40c
+var voice2SustainRelease: ubyte^0xd40d
+
+// --- Voice 3 ---
+
+var voice3FrequencyLow: ubyte^0xd40e
+var voice3FrequencyHigh: ubyte^0xd40f
+var voice3PulseWidthLow: ubyte^0xd410
+var voice3PulseWidthHigh: ubyte^0xd411
+var voice3Control: ubyte^0xd412
+var voice3AttackDecay: ubyte^0xd413
+var voice3SustainRelease: ubyte^0xd414
+
+// --- Filter ---
+
+// Filter cutoff frequency, low 8 bits of the 11-bit value; bits 3-7 are
+// not used.
+var filterCutoffLow: ubyte^0xd415
+
+// Filter cutoff frequency, high 3 bits (bits 0-2).
+var filterCutoffHigh: ubyte^0xd416
+
+// Filter resonance in bits 7-4 (RES) and the filter routing in bits 3-0
+// (FILT).
+var filterResonanceRouting: ubyte^0xd417
+
+// Filter mode in bits 7-4 and the master volume in bits 3-0 (VOL).
+var filterModeVolume: ubyte^0xd418
+
+// --- Read-only registers ---
+
+// Paddle 1 X position, read only. Updated every 512 cycles, so it holds
+// the last conversion.
+val paddle1X: ubyte^0xd419
+
+// Paddle 1 Y position, read only.
+val paddle1Y: ubyte^0xd41a
+
+// Oscillator 3 output and the random number generator, in one register.
+val oscillator3Random: ubyte^0xd41b
+
+// Envelope 3 output.
+val envelope3: ubyte^0xd41c
+
+// --- Enums ---
+
+// The waveform of a voice, in bits 7-4 of the voice control register.
+//
+// The waveforms are not additive in the way the bits suggest: selecting
+// more than one is not a sum, and the combination of triangle and
+// sawtooth is the sawtooth alone. The four plain waveforms are the ones a
+// voice is normally driven with.
+enum Waveform {
+    TRIANGLE = 0x10,
+    SAWTOOTH = 0x20,
+    PULSE = 0x40,
+    NOISE = 0x80
+}
+
+// The control bits of a voice, in bits 3-0 of the voice control register.
+//
+// GATE opens the envelope (and holds it while set; clearing it starts the
+// release), SYNC locks the voice's frequency to the one above it, RING
+// replaces the triangle output with a ring modulation of this voice and
+// the one above, and TEST clears and freezes the accumulator.
+enum VoiceControl {
+    GATE = 0x01,
+    SYNC = 0x02,
+    RING = 0x04,
+    TEST = 0x08
+}
+
+// The filter routing in bits 3-0 of the filter control register: which
+// signals go through the filter instead of straight to the output.
+//
+// A voice whose bit is set is filtered; a cleared bit sends it to the
+// output untouched. Bit 0 is voice 1, bit 1 voice 2, bit 2 voice 3, and
+// bit 3 the external input.
+enum FilterRouting {
+    VOICE1 = 0x01,
+    VOICE2 = 0x02,
+    VOICE3 = 0x04,
+    EXTERNAL = 0x08
+}
+
+// The filter mode in bits 7-4 of the mode/volume register.
+//
+// The modes are additive: selecting lowpass and highpass together gives a
+// notch, and several can be combined. 3 OFF is not a filter type but a
+// switch: it disconnects voice 3 from the output, so that voice 3 can be
+// used for modulation only.
+//
+// The modes occupy one bit each, so a voice filtered by the lowpass also
+// reaches the output through the bandpass and the highpass unless those
+// are cleared.
+enum FilterMode {
+    LOWPASS = 0x10,
+    BANDPASS = 0x20,
+    HIGHPASS = 0x40,
+    VOICE3_OFF = 0x80
+}
+
+// The master volume in bits 3-0 of the mode/volume register.
+//
+// The volume is not linear: each step is a fifth of the signal, so the
+// table is the sixteen steps from silence to full.
+enum Volume {
+    SILENT = 0x00,
+    STEP1 = 0x01,
+    STEP2 = 0x02,
+    STEP3 = 0x03,
+    STEP4 = 0x04,
+    STEP5 = 0x05,
+    STEP6 = 0x06,
+    STEP7 = 0x07,
+    STEP8 = 0x08,
+    STEP9 = 0x09,
+    STEP10 = 0x0a,
+    STEP11 = 0x0b,
+    STEP12 = 0x0c,
+    STEP13 = 0x0d,
+    STEP14 = 0x0e,
+    MAX = 0x0f
+}
