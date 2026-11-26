@@ -708,11 +708,11 @@ fun main() {
 
 ## Standard library
 
-Four files ship in `stdlib/`; pass the ones you use on the command
+Five files ship in `stdlib/`; pass the ones you use on the command
 line before your own files:
 
 ```
-wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/c64/sid.wtk stdlib/wolin/screen.wtk myprog.wtk -o myprog.prg
+wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/c64/sid.wtk stdlib/c64/cia.wtk stdlib/wolin/screen.wtk myprog.wtk -o myprog.prg
 ```
 
 - `c64/kernal.wtk` (`package c64.kernal`) — kernal entry points as
@@ -747,6 +747,20 @@ wolinc stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/c64/sid.wtk stdlib/wolin/
   SYNC and GATE bits), `FilterRouting` (which voices the filter takes),
   `FilterMode` (the lowpass, bandpass, highpass and voice-3-off bits) and
   `Volume` (the sixteen master volume steps).
+- `c64/cia.wtk` (`package c64.cia`) — both MOS 6526 interface adapters, CIA 1
+  at $dc00 and CIA 2 at $dd00, in one file: the sixteen registers of each
+  chip (ports and their directions, the two timers, the time-of-day clock,
+  the serial data register, the interrupt control and status register and
+  the two control registers). The file also declares the enums that name
+  the register values: `CiaControl` (the control register bits), `TimerBClock`
+  (the two-bit clock source field of control register B), `InterruptSource`
+  (the interrupt sources, whose bit positions are the same for the flags
+  and the enables), `InterruptMask` (the fill bit of the mask register),
+  `JoystickButton` (the joystick bits, active low) and `VicBank` (the
+  inverted bank select of CIA 2's port A). Two registers do not read back
+  what was written: the control registers show the timers' running state in
+  their start bit, and the interrupt control register is a flag register
+  that clears its flags when read.
 
 ```wtk
 package app

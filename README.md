@@ -159,8 +159,9 @@ java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt \
 
 The stdlib ships `c64/kernal.wtk` (the KERNAL entry points),
 `c64/vic.wtk` (the VIC-II registers and the enums that name their
-values), `c64/sid.wtk` (the SID registers and their enums) and
-`wolin/screen.wtk` (screen output).
+values), `c64/sid.wtk` (the SID registers and their enums),
+`c64/cia.wtk` (both CIA chips and their enums) and `wolin/screen.wtk`
+(screen output).
 
 - `hello.wtk` — print text, then cycle the border and background through
   all 16 palette colours.

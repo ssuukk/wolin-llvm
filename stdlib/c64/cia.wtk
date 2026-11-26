@@ -1,0 +1,219 @@
+package c64.cia
+
+// The two MOS 6526 Complex Interface Adapters, CIA 1 at $dc00 and CIA 2 at
+// $dd00.
+//
+// Each chip has 16 registers at the same offsets; the two chips differ only
+// in what is wired to their ports:
+//
+// - CIA 1 ($dc00) drives the keyboard matrix, the two joystick ports, the
+//   paddles and the light pen, and its interrupt line is the 6510's IRQ.
+// - CIA 2 ($dd00) drives the serial (IEC) bus and the user port, selects
+//   the VIC-II 16K bank through port A bits 0-1, and its interrupt line is
+//   the 6510's NMI.
+//
+// A register's address mirrors throughout $dc10-$dcff and $dd10-$ddff
+// (every 16 bytes); only the base 16 addresses should be used.
+//
+// Each name is a fixed-address `ubyte` window on one register: a read
+// fetches the register, a write stores it.
+//
+// The register layout and the bit assignments follow the MOS 6526 and the
+// ciacore engine VICE embeds (src/core/ciacore.c): the control register
+// bits are shared by both chips, the timer B clock source is a two-bit
+// field, and the interrupt control register has one set of bit positions
+// for both the sources and the flags.
+
+// --- CIA 1: $dc00-$dc0f ---
+
+// Port A data. On CIA 1 this drives the keyboard columns and reads the
+// joystick on port 2; the paddle lines are on bits 6-7.
+var cia1PortA: ubyte^0xdc00
+
+// Port B data. On CIA 1 this reads the keyboard rows and the joystick on
+// port 1; bits 6-7 can carry the timer underflow outputs.
+var cia1PortB: ubyte^0xdc01
+
+// Port A data direction: a set bit is an output, a clear bit an input.
+var cia1PortADirection: ubyte^0xdc02
+
+// Port B data direction: a set bit is an output, a clear bit an input.
+var cia1PortBDirection: ubyte^0xdc03
+
+// Timer A, low byte. A read gives the running count, a write sets the
+// latch.
+var cia1TimerALow: ubyte^0xdc04
+
+// Timer A, high byte.
+var cia1TimerAHigh: ubyte^0xdc05
+
+// Timer B, low byte.
+var cia1TimerBLow: ubyte^0xdc06
+
+// Timer B, high byte.
+var cia1TimerBHigh: ubyte^0xdc07
+
+// Time of day: tenths of a second, in BCD. Writing it starts the clock.
+var cia1TimeOfDayTenths: ubyte^0xdc08
+
+// Time of day: seconds, in BCD.
+var cia1TimeOfDaySeconds: ubyte^0xdc09
+
+// Time of day: minutes, in BCD.
+var cia1TimeOfDayMinutes: ubyte^0xdc0a
+
+// Time of day: hours, in BCD, with the PM flag in bit 7. Writing it stops
+// the clock; reading it latches the time.
+var cia1TimeOfDayHours: ubyte^0xdc0b
+
+// Serial data register, the shift register of the serial port.
+var cia1SerialData: ubyte^0xdc0c
+
+// Interrupt control and status. A read gives the flags (and clears them);
+// a write sets or clears the interrupt enables. On CIA 1 this drives the
+// 6510's IRQ line.
+var cia1InterruptControl: ubyte^0xdc0d
+
+// Control register A: the timer A mode, the serial port direction and
+// the time-of-day clock source.
+var cia1ControlA: ubyte^0xdc0e
+
+// Control register B: the timer B mode and the time-of-day alarm select.
+var cia1ControlB: ubyte^0xdc0f
+
+// --- CIA 2: $dd00-$dd0f ---
+
+// Port A data. On CIA 2 bits 0-1 select the VIC-II 16K bank (the bits are
+// inverted: %11 is bank 0), bit 2 is RS-232 TXD, bits 3-5 are the serial
+// bus ATN, clock and data outputs, and bits 6-7 are the serial bus clock
+// and data inputs.
+var cia2PortA: ubyte^0xdd00
+
+// Port B data. On CIA 2 this is the user port and the RS-232 lines:
+// RXD, RTS, DTR, RI, DCD, a user-defined line, CTS and DSR.
+var cia2PortB: ubyte^0xdd01
+
+// Port A data direction: a set bit is an output, a clear bit an input.
+// The KERNAL sets this to $3f, so bits 0-5 are outputs.
+var cia2PortADirection: ubyte^0xdd02
+
+// Port B data direction: a set bit is an output, a clear bit an input.
+var cia2PortBDirection: ubyte^0xdd03
+
+// Timer A, low byte.
+var cia2TimerALow: ubyte^0xdd04
+
+// Timer A, high byte.
+var cia2TimerAHigh: ubyte^0xdd05
+
+// Timer B, low byte.
+var cia2TimerBLow: ubyte^0xdd06
+
+// Timer B, high byte.
+var cia2TimerBHigh: ubyte^0xdd07
+
+// Time of day: tenths of a second, in BCD.
+var cia2TimeOfDayTenths: ubyte^0xdd08
+
+// Time of day: seconds, in BCD.
+var cia2TimeOfDaySeconds: ubyte^0xdd09
+
+// Time of day: minutes, in BCD.
+var cia2TimeOfDayMinutes: ubyte^0xdd0a
+
+// Time of day: hours, in BCD, with the PM flag in bit 7.
+var cia2TimeOfDayHours: ubyte^0xdd0b
+
+// Serial data register, the shift register of the serial port.
+var cia2SerialData: ubyte^0xdd0c
+
+// Interrupt control and status. On CIA 2 this drives the 6510's NMI line.
+var cia2InterruptControl: ubyte^0xdd0d
+
+// Control register A: the timer A mode, the serial port direction and
+// the time-of-day clock source.
+var cia2ControlA: ubyte^0xdd0e
+
+// Control register B: the timer B mode and the time-of-day alarm select.
+var cia2ControlB: ubyte^0xdd0f
+
+// --- Enums ---
+
+// The control register bits both chips share, in the control register A
+// and the matching bits of control register B.
+//
+// START runs the timer, PBON puts the timer's underflow on port B (bit 6
+// for timer A, bit 7 for timer B), OUTMODE makes that output toggle
+// instead of pulsing, RUNMODE selects a one-shot timer instead of a
+// continuous one, LOAD forces the latch into the counter, INMODE counts
+// the CNT pin instead of the system clock, SPMODE sets the serial port
+// to output, and TODIN selects the 50 Hz time-of-day clock.
+enum CiaControl {
+    START = 0x01,
+    PBON = 0x02,
+    OUTMODE = 0x04,
+    RUNMODE = 0x08,
+    LOAD = 0x10,
+    INMODE = 0x20,
+    SPMODE = 0x40,
+    TODIN = 0x80
+}
+
+// The timer B clock source, in bits 6-5 of control register B.
+//
+// The field is two bits wide, so the four values are the masks that go
+// into the field: the system clock, the CNT pin, timer A's underflow, or
+// timer A's underflow while the CNT pin is high.
+enum TimerBClock {
+    SYSTEM_CLOCK = 0x00,
+    CNT_PIN = 0x20,
+    TIMER_A = 0x40,
+    TIMER_A_AND_CNT = 0x60
+}
+
+// The interrupt sources of the interrupt control register, in the same
+// bit positions for both chips.
+//
+// The register has two faces: a read gives the flags (and clears them),
+// a write sets or clears the enables. The enable bits and the flag bits
+// are the same positions, so one enum names both.
+enum InterruptSource {
+    TIMER_A = 0x01,
+    TIMER_B = 0x02,
+    ALARM = 0x04,
+    SERIAL = 0x08,
+    FLAG = 0x10
+}
+
+// The interrupt mask register's fill bit, in bit 7.
+//
+// A write with this bit set enables every source whose bit is set; a
+// write with it clear disables them. The sources themselves keep their
+// positions, so the two are combined.
+enum InterruptMask {
+    SET = 0x80
+}
+
+// The joystick buttons, in the port bits.
+//
+// All signals are active low: a cleared bit means the button is pressed.
+// On CIA 1 the joystick on port 2 is in port A and the one on port 1 is
+// in port B.
+enum JoystickButton {
+    UP = 0x01,
+    DOWN = 0x02,
+    LEFT = 0x04,
+    RIGHT = 0x08,
+    FIRE = 0x10
+}
+
+// The VIC-II 16K bank select, in bits 0-1 of CIA 2's port A.
+//
+// The bits are inverted: the bank number is the complement of the two
+// bits, so %11 is bank 0 and %00 is bank 3.
+enum VicBank {
+    BANK3 = 0x00,
+    BANK2 = 0x01,
+    BANK1 = 0x02,
+    BANK0 = 0x03
+}
