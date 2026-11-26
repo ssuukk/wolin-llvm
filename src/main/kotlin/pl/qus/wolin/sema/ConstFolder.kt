@@ -7,6 +7,7 @@ import pl.qus.wolin.ast.CharLit
 import pl.qus.wolin.ast.Convert
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.IntLit
+import pl.qus.wolin.ast.MemberAccess
 import pl.qus.wolin.ast.NullLit
 import pl.qus.wolin.ast.RealLit
 import pl.qus.wolin.ast.StringLit
@@ -44,6 +45,8 @@ object ConstFolder {
                 ConstValue.FunctionValue(expr.name, functionNames.getValue(expr.name))
             else -> constSoFar[expr.name]
         }
+        is MemberAccess ->
+            expr.enumValue?.let { ConstValue.IntValue(it.toLong(), expr.type) }
         is UnaryOp -> foldUnary(expr, constSoFar, functionNames)
         is BinaryOp -> foldBinary(expr, constSoFar, functionNames)
         is Convert -> foldConvert(expr, constSoFar, functionNames)

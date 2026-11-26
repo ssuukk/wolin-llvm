@@ -212,6 +212,7 @@ private fun emitFiles(program: Ast.Program): List<CompiledFile>? {
                 globals = scope.globals,
                 functions = scope.functions,
                 structs = program.structs,
+                enums = scope.enums,
                 traits = scope.traits,
                 impls = scope.impls,
                 imports = scope.imports,

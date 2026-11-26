@@ -108,6 +108,8 @@ trait Sum { fun sum(): uword } // method contract, no state
 impl Point { fun bump() { this.x++ } } // inherent method
 impl Point : Sum { fun sum(): uword { return this.x.toUword() + this.y } } // static impl
 val x: ubyte = 5              // cannot be assigned to
+enum { PENDING = 0, RUNNING = 5 }       // anonymous ubyte constants
+enum Status { PENDING, RUNNING = 5 }    // Status.PENDING; Status is a ubyte alias
 fun f(): ubyte { ... }        // function
 interrupt fun handler() { }   // 6502 interrupt handler
 fun chrout^0xffd2(c: ubyte^CPU.A)  // fixed-address function: a ROM call
@@ -166,6 +168,8 @@ java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt \
   colour band.
 - `labels.wtk` — a border-colour cycle driven by labels: `return@` skips a
   colour, `continue@` retries the loop, `break@` leaves it.
+- `enums.wtk` — simple enums: anonymous `ubyte` constants and a named enum
+  whose entries are `Status.ENTRY`, with `Status` as a `ubyte` alias.
 
 ## Tests
 

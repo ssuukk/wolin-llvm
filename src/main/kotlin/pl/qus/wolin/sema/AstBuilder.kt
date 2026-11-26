@@ -28,6 +28,7 @@ class AstBuilder {
         val globals = mutableListOf<GlobalDecl>()
         val functions = mutableListOf<FunDecl>()
         val structs = mutableListOf<StructDecl>()
+        val enums = mutableListOf<EnumDecl>()
         val traits = mutableListOf<TraitDecl>()
         val impls = mutableListOf<ImplDecl>()
 
@@ -39,6 +40,26 @@ class AstBuilder {
             top.propertyDeclaration()?.let { globals += buildGlobal(it); return@forEach }
             top.functionDeclaration()?.let { functions += buildFunction(it); return@forEach }
             top.structDeclaration()?.let { structs += buildStruct(it); return@forEach }
+            top.enumDeclaration()?.let { declaration ->
+                val built = buildEnum(declaration)
+                if (built.name == null) {
+                    globals += built.entries.map { entry ->
+                        GlobalDecl(
+                            name = entry.name,
+                            type = Types.ubyte,
+                            init = IntLit(entry.value.toLong(), Types.ubyte),
+                            location = null,
+                            isVal = true,
+                            declaredType = Types.ubyte,
+                            line = entry.line,
+                            enumValue = entry.value,
+                        )
+                    }
+                } else {
+                    enums += EnumDecl(built.name, built.entries, built.line)
+                }
+                return@forEach
+            }
             top.traitDeclaration()?.let { traits += buildTrait(it); return@forEach }
             top.implDeclaration()?.let { impls += buildImpl(it); return@forEach }
             top.classDeclaration()?.let {
@@ -53,6 +74,7 @@ class AstBuilder {
             globals = globals,
             functions = functions,
             structs = structs,
+            enums = enums,
             traits = traits,
             impls = impls,
             imports = imports,
@@ -82,6 +104,35 @@ class AstBuilder {
             name = ctx.simpleIdentifier().text,
             fields = ctx.structBody().propertyDeclaration().map { buildGlobal(it) },
         )
+
+    private data class BuiltEnum(
+        val name: String?,
+        val entries: List<EnumEntry>,
+        val line: Int,
+    )
+
+    /**
+     * Computes the entries of a simple enum. Values are literal-only, so the
+     * builder resolves them; the checker sees only final values.
+     */
+    private fun buildEnum(ctx: KotlinParser.EnumDeclarationContext): BuiltEnum {
+        val entries = mutableListOf<EnumEntry>()
+        val seen = mutableSetOf<String>()
+        var next = 0
+        for (entry in ctx.enumValueBody().enumValueEntry()) {
+            val name = entry.simpleIdentifier().text
+            if (!seen.add(name)) throw SemaException("Duplicate enum entry $name", entry.start.line)
+            val explicit = entry.expression()?.let { expression ->
+                (buildExpression(expression) as? IntLit)
+                    ?: throw SemaException("Enum value must be an integer literal", entry.start.line)
+            }
+            val value = explicit?.value ?: next.toLong()
+            if (value !in 0..255) throw SemaException("Enum value out of range", entry.start.line)
+            next = value.toInt() + 1
+            entries += EnumEntry(name, value.toInt(), entry.start.line)
+        }
+        return BuiltEnum(ctx.simpleIdentifier()?.text, entries, ctx.start.line)
+    }
 
     private fun buildTrait(ctx: KotlinParser.TraitDeclarationContext): TraitDecl =
         TraitDecl(

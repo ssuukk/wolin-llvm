@@ -184,6 +184,7 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             }
         }
         for (g in program.globals) {
+            if (g.enumValue != null) continue
             val location = g.location
             if (location is FixedAddress || location is FixedArray) {
                 constants += fixedGlobalLine(prefix, g, location)
@@ -238,7 +239,7 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             // constant expression, so the global is zero-initialised and the
             // file's init function stores the folded value before main.
             val init = g.init?.let {
-                if (referencesAnotherEntity(it)) zeroFor(TypeMapper.ir(g.type))
+                if (referencesAnotherEntity(it, program.resolved)) zeroFor(TypeMapper.ir(g.type))
                 else g.constValue!!.spelling
             } ?: zeroFor(TypeMapper.ir(g.type))
             constants += "@\"$prefix.${g.name}\" = global ${TypeMapper.ir(g.type).llvmName()} $init"
@@ -252,6 +253,7 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
      */
     private fun emitForeignGlobals(program: Program, prefix: String, constants: MutableList<String>) {
         for (foreign in program.visibleGlobals) {
+            if (foreign.decl.enumValue != null) continue
             if (foreign.decl.location is FixedAddress || foreign.decl.location is FixedArray) continue
             // A CPU flag variable has no storage: it is the register itself.
             if (foreign.decl.location is CpuRegister) continue

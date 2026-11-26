@@ -39,6 +39,9 @@ class TypeChecker {
     /** The traits visible in the file being checked. */
     private var traitTypes: MutableMap<String, TraitDecl> = mutableMapOf()
 
+    /** The named enums visible in the file being checked. */
+    private var enumTypes: MutableMap<String, EnumDecl> = mutableMapOf()
+
     /** The receiver of the impl method being checked, or null outside one. */
     private var currentThis: StructDecl? = null
 
@@ -88,6 +91,7 @@ class TypeChecker {
         globals = file.globals,
         functions = file.functions,
         structs = file.structs,
+        enums = file.enums,
         traits = file.traits,
         impls = file.impls,
         imports = file.imports,
@@ -167,6 +171,43 @@ class TypeChecker {
     }
 
     /**
+     * The named enums a file can name: its own, the same-package ones, and
+     * the imported ones. Anonymous enums have no type name and are skipped.
+     */
+    private fun visibleEnums(fileScope: FileScope, program: Ast.Program): MutableMap<String, EnumDecl> {
+        val visible = LinkedHashMap<String, EnumDecl>()
+        fun add(decl: EnumDecl) {
+            val name = decl.name ?: return
+            val prior = visible[name]
+            if (prior != null && prior !== decl) {
+                throw SemaException("Duplicate enum $name", decl.line)
+            }
+            visible[name] = decl
+        }
+        program.files.filter { it.packageName == fileScope.packageName && it !== fileScope }
+            .forEach { other -> other.enums.forEach { add(it) } }
+        fileScope.enums.forEach { add(it) }
+        fileScope.imports.forEach { import ->
+            val path = import.path
+            val imported = if (path.endsWith(".*")) {
+                val packageName = path.removeSuffix(".*")
+                program.files.filter { it.packageName == packageName }.flatMap { it.enums }
+            } else {
+                val separator = path.lastIndexOf('.')
+                if (separator < 0) emptyList() else {
+                    val packageName = path.substring(0, separator)
+                    val name = path.substring(separator + 1)
+                    program.files.filter { it.packageName == packageName }
+                        .flatMap { it.enums }
+                        .filter { it.name == name }
+                }
+            }
+            imported.forEach { if (it.name != null) visible.putIfAbsent(it.name, it) }
+        }
+        return visible
+    }
+
+    /**
      * Computes a struct's packed layout once. Fields are in declaration
      * order, with no padding: the 6502 has no alignment requirement.
      */
@@ -228,8 +269,20 @@ class TypeChecker {
         fileImports = fileScope.imports
         structTypes = visibleStructs(fileScope, program)
         traitTypes = visibleTraits(fileScope, program)
+        // The enums are known before any written type is resolved: an enum
+        // name is a ubyte alias, and `var phase: Status` must resolve to it.
+        enumTypes = visibleEnums(fileScope, program)
         (structTypes.keys intersect traitTypes.keys).firstOrNull()?.let { name ->
             throw SemaException("Type name $name is both a struct and a trait")
+        }
+        (enumTypes.keys intersect (structTypes.keys + traitTypes.keys)).firstOrNull()?.let { name ->
+            throw SemaException("Type name $name is both an enum and a struct or trait")
+        }
+        enumTypes.values.forEach { decl ->
+            val name = decl.name!!
+            if (name in BUILTIN_TYPE_NAMES || name == "CPU") {
+                throw SemaException("Enum name $name is reserved", decl.line)
+            }
         }
         traitTypes.values.forEach { checkTraitDecl(it) }
         // Resolve every declaration's written type before any body is
@@ -423,6 +476,11 @@ class TypeChecker {
         when (type.kind) {
             TypeKind.STRUCT -> {
                 val name = type.structName
+                if (name != null && enumTypes.containsKey(name)) {
+                    type.kind = TypeKind.UBYTE
+                    type.structName = null
+                    return
+                }
                 if (name != null && traitTypes.containsKey(name)) {
                     type.kind = TypeKind.TRAIT
                     type.traitName = name
@@ -464,7 +522,11 @@ class TypeChecker {
         fileImports = fileScope.imports
         structTypes = visibleStructs(fileScope, program)
         traitTypes = visibleTraits(fileScope, program)
+        enumTypes = visibleEnums(fileScope, program)
         structTypes.values.forEach { globals.declare(it.name, Symbol.StructSymbol(it)) }
+        enumTypes.values.forEach { decl ->
+            globals.declare(decl.name!!, Symbol.EnumSymbol(decl))
+        }
 
         // The file's own functions are visible everywhere inside it, so they
         // are declared before anything is checked — a call may name a
@@ -485,7 +547,7 @@ class TypeChecker {
                         global.name,
                         Symbol.DataSymbol(
                             global.type, global.location, global.init, global.isVal,
-                            other.mangledPrefix,
+                            other.mangledPrefix, global.enumValue,
                         ),
                     )
                 }
@@ -495,7 +557,7 @@ class TypeChecker {
                 global.name,
                 Symbol.DataSymbol(
                     global.type, global.location, global.init, global.isVal,
-                    fileScope.mangledPrefix,
+                    fileScope.mangledPrefix, global.enumValue,
                 ),
             )
         }
@@ -569,6 +631,9 @@ class TypeChecker {
         functionNames: Map<String, String>,
     ) {
         val declared = global.declaredType
+        // Resolve the annotation first: a named enum is a ubyte alias, and
+        // `var s: Status = Status.PENDING` must compare ubyte with ubyte.
+        declared?.let { resolveType(it, global.line) }
         if (global.init != null) {
             // The ordering error must beat the plain "unknown variable" the
             // reference check below would report for the same name.
@@ -604,7 +669,13 @@ class TypeChecker {
             global.constValue = ConstFolder.fold(global.init!!, constSoFar, functionNames)
                 ?: throw SemaException("global initialiser must be a constant expression")
         }
-        scope.declare(global.name, Symbol.DataSymbol(type, global.location, global.init, global.isVal))
+        scope.declare(
+            global.name,
+            Symbol.DataSymbol(
+                type, global.location, global.init, global.isVal,
+                enumValue = global.enumValue,
+            ),
+        )
         val constValue = global.constValue
         if (constValue != null) constSoFar[global.name] = constValue
     }
@@ -1254,6 +1325,8 @@ class TypeChecker {
             is Symbol.FunSymbol -> expr.type = Types.uword
             is Symbol.StructSymbol ->
                 throw SemaException("Struct ${symbol.decl.name} is a type, not a value")
+            is Symbol.EnumSymbol ->
+                throw SemaException("Enum ${symbol.decl.name} is a type, not a value")
         }
         resolved[expr] = symbol
         return expr.type
@@ -1446,6 +1519,15 @@ class TypeChecker {
             }
 
             is MemberAccess -> {
+                val receiver = target.receiver
+                if (receiver is VarRef) {
+                    val symbol = lookup(receiver.name)
+                    if (symbol is Symbol.EnumSymbol) {
+                        throw SemaException(
+                            "Cannot assign to enum entry ${symbol.decl.name}.${target.name}"
+                        )
+                    }
+                }
                 val receiverType = checkExpr(target.receiver, null, allowStruct = true)
                 val owner = structDeclOf(receiverType)
                     ?: throw SemaException("Cannot access member ${target.name} of $receiverType")
@@ -1584,6 +1666,8 @@ class TypeChecker {
         when (symbol) {
             is Symbol.StructSymbol ->
                 throw SemaException("Struct ${symbol.decl.name} is a type, not a function")
+            is Symbol.EnumSymbol ->
+                throw SemaException("Enum ${symbol.decl.name} is a type, not a function")
             is Symbol.FunSymbol -> {
                 resolved[callee] = symbol
                 callee.type = functionTypeOf(symbol.decl)
@@ -1714,6 +1798,17 @@ class TypeChecker {
     }
 
     private fun checkMemberAccess(expr: MemberAccess): WolinType {
+        val receiver = expr.receiver
+        if (receiver is VarRef) {
+            val symbol = lookup(receiver.name)
+            if (symbol is Symbol.EnumSymbol) {
+                val entry = symbol.decl.entries.firstOrNull { it.name == expr.name }
+                    ?: throw SemaException("Unknown enum entry ${expr.name} in ${symbol.decl.name}")
+                expr.enumValue = entry.value
+                expr.type = Types.ubyte
+                return expr.type
+            }
+        }
         val receiverType = checkExpr(expr.receiver, null, allowStruct = true)
         val owner = structDeclOf(receiverType)
             ?: throw SemaException("Cannot access member ${expr.name} of $receiverType")

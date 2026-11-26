@@ -313,6 +313,9 @@ class ExprEmitter(
             // A function name used as a value is its address, as a `uword`.
             return b.instr(IrType.I16, "ptrtoint i8* @\"${symbol.prefix}.${symbol.decl.name}\" to i16")
         }
+        (resolved[e] as? Symbol.DataSymbol)?.enumValue?.let { value ->
+            return IrValue(value.toString(), IrType.I8)
+        }
         val ty = TypeMapper.ir(e.type)
         val addressed = e.type.kind == TypeKind.ARRAY || e.type.kind == TypeKind.STRING ||
             e.type.kind == TypeKind.TRAIT
@@ -749,6 +752,7 @@ class ExprEmitter(
     }
 
     private fun emitMemberAccess(e: MemberAccess): IrValue {
+        e.enumValue?.let { return IrValue(it.toString(), IrType.I8) }
         val field = memberField(e)
         val ty = TypeMapper.ir(field.type)
         val p = memberAddress(e)

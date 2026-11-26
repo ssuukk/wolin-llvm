@@ -20,6 +20,7 @@ class ImportResolver {
         resolveFunction(name, imports, program)
             ?: resolveGlobal(name, imports, program)
             ?: resolveStruct(name, imports, program)
+            ?: resolveEnum(name, imports, program)
 
     /**
      * The struct [name] refers to through [imports], or null when no import
@@ -54,6 +55,38 @@ class ImportResolver {
     }
 
     /**
+     * The named enum [name] refers to through [imports], or null when no
+     * import brings it in. Anonymous enums have no name to import.
+     */
+    fun resolveEnum(name: String, imports: List<ImportDecl>, program: Ast.Program): Symbol? {
+        for (import in imports) {
+            val path = import.path
+            if (path.endsWith(".*")) {
+                val packageName = path.removeSuffix(".*")
+                val scope = program.files.firstOrNull {
+                    it.packageName == packageName && it.enums.any { e -> e.name == name }
+                }
+                if (scope != null) {
+                    return Symbol.EnumSymbol(scope.enums.first { it.name == name })
+                }
+                continue
+            }
+            val separator = path.lastIndexOf('.')
+            if (separator < 0) continue
+            val packageName = path.substring(0, separator)
+            val importedName = path.substring(separator + 1)
+            if (importedName != name) continue
+            val scope = program.files.firstOrNull {
+                it.packageName == packageName && it.enums.any { e -> e.name == importedName }
+            }
+            if (scope != null) {
+                return Symbol.EnumSymbol(scope.enums.first { it.name == importedName })
+            }
+        }
+        return null
+    }
+
+    /**
      * The global [name] refers to through [imports], or null when no import
      * brings it in.
      */
@@ -71,7 +104,8 @@ class ImportResolver {
                 if (scope != null) {
                     val global = scope.globals.first { it.name == name }
                     return Symbol.DataSymbol(
-                        global.type, global.location, global.init, global.isVal, scope.mangledPrefix,
+                        global.type, global.location, global.init, global.isVal,
+                        scope.mangledPrefix, global.enumValue,
                     )
                 }
                 continue
@@ -87,7 +121,8 @@ class ImportResolver {
             if (scope != null) {
                 val global = scope.globals.first { it.name == name }
                 return Symbol.DataSymbol(
-                    global.type, global.location, global.init, global.isVal, scope.mangledPrefix,
+                    global.type, global.location, global.init, global.isVal,
+                    scope.mangledPrefix, global.enumValue,
                 )
             }
         }

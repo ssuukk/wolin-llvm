@@ -1,5 +1,6 @@
 package pl.qus.wolin.sema
 
+import pl.qus.wolin.ast.EnumDecl
 import pl.qus.wolin.ast.Expr
 import pl.qus.wolin.ast.FunDecl
 import pl.qus.wolin.ast.Location
@@ -22,6 +23,8 @@ sealed class Symbol {
          * under that file's prefix.
          */
         val prefix: String = "",
+        /** The value of an anonymous enum entry, inlined instead of loaded. */
+        val enumValue: Int? = null,
     ) : Symbol()
 
     /**
@@ -35,6 +38,9 @@ sealed class Symbol {
 
     /** A struct type declaration. */
     data class StructSymbol(val decl: StructDecl) : Symbol()
+
+    /** A named enum: its name is a type and an entry receiver, not a value. */
+    data class EnumSymbol(val decl: EnumDecl) : Symbol()
 }
 
 /**

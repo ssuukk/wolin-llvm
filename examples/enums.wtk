@@ -1,0 +1,65 @@
+// enums.wtk — simple enums: anonymous constants and a named enum.
+//
+// Build:
+//   make examples/enums.prg
+
+package demo.enums
+
+import wolin.println
+import wolin.clearScreen
+import c64.kernal.chrout
+
+// An anonymous enum: the entries are file-scope ubyte constants.
+enum {
+    PENDING = 0,
+    RUNNING = 5,
+    ERROR = 255
+}
+
+// A named enum: the entries are `Status.ENTRY`, and `Status` is a ubyte
+// alias in type position — not a distinct type.
+enum Status {
+    IDLE,
+    BOOTING = 2,
+    READY,
+    DONE = 10
+}
+
+// The current phase. `Status` is a ubyte, so this is one byte of storage.
+var phase: Status = Status.IDLE
+
+// Report a phase. The `when` compares the subject against the entries.
+fun report(p: Status) {
+    when (p) {
+        Status.IDLE -> println("IDLE")
+        Status.BOOTING -> println("BOOTING")
+        Status.READY -> println("READY")
+        Status.DONE -> println("DONE")
+        else -> println("UNKNOWN")
+    }
+}
+
+fun main() {
+    clearScreen()
+    chrout(19) // reverse cursor: home the text cursor to row 0, col 0
+
+    println("SIMPLE ENUMS ON THE C64")
+    println("")
+    println("ANONYMOUS ENTRIES ARE UBYTE CONSTANTS:")
+    println("  PENDING=${PENDING} RUNNING=${RUNNING} ERROR=${ERROR}")
+    println("")
+    println("A NAMED ENUM GIVES ITS ENTRIES A NAME:")
+    println("  Status.IDLE=${Status.IDLE} Status.BOOTING=${Status.BOOTING}")
+    println("  Status.READY=${Status.READY} Status.DONE=${Status.DONE}")
+    println("")
+
+    // The named enum drives a small state machine.
+    phase = Status.BOOTING
+    report(phase)
+    phase = Status.READY
+    report(phase)
+    phase = Status.DONE
+    report(phase)
+
+    while (true) {}
+}

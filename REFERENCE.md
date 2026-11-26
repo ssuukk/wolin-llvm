@@ -64,6 +64,8 @@ var arr: ubyte[16]            // 16 elements, ubyte index
 var arr: uword[uword, 16]     // 16 elements, uword index
 var arr: ubyte[ubyte]^0x3000  // array at a fixed address
 val x: ubyte = 5              // cannot be assigned to
+enum { PENDING = 0, RUNNING = 5 }    // anonymous ubyte constants
+enum Status { PENDING, RUNNING = 5 } // named; Status.PENDING, Status is a ubyte alias
 fun f(a: ubyte, b: ubyte): ubyte { return a + b }
 fun f()                       // no return type = unit
 interrupt fun handler() { }   // 6502 interrupt handler: exits with rti, not rts
@@ -83,6 +85,39 @@ var a: ubyte = 7
 var b: ubyte = a + 1          // folded to 8 at compile time
 var addr: uword = f           // f's address; computed in the init function
 ```
+
+### Enums
+
+`enum { … }` declares anonymous file-scope `ubyte` constants:
+
+```kotlin
+enum { PENDING = 0, RUNNING = 5, ERROR = 255 }
+var state: ubyte = RUNNING
+```
+
+`enum Name { … }` declares a named enum. Entries are accessed as
+`Name.ENTRY`, and `Name` is a **ubyte alias** in type position — not a
+distinct type:
+
+```kotlin
+enum Status { PENDING, RUNNING = 5, ERROR = 255 }
+var state: Status = Status.RUNNING
+var raw: ubyte = state        // same type; no conversion
+```
+
+- Autonumber: the first entry is `0`; an entry without a value is the
+  previous value + 1; an explicit value resets the counter.
+- Values are integer literals in `0..255` (decimal, hex, binary).
+- Entries are `val`-like and occupy no storage: every use is an inline
+  `i8` constant. A global initialised from an entry is static data.
+- Anonymous entries are visible to same-package files and through
+  `import pkg.NAME` / `import pkg.*` like globals.
+- A named enum is imported by its name (`import lib.Status`) or through a
+  package wildcard. Importing an entry directly is not supported.
+- Named entries are not bare constants: write `Status.RUNNING`, not
+  `RUNNING`.
+- No local enums, no `enum class`, no enum-typed struct fields or
+  trait/impl method signatures. There is no `when` exhaustiveness check.
 
 ## Statements and control flow
 
@@ -796,6 +831,14 @@ Errors are `SemaException`s with a message that names the problem:
 | `Struct field X is not a scalar type: Y` | an array or struct used as a struct field |
 | `Unknown label X` | a labelled jump to a name that is not a label of the current function |
 | `Label X already defined` | the same label name declared twice in one function |
+| `Duplicate enum entry X` | two entries of one enum share a name |
+| `Enum value must be an integer literal` | an enum value that is not an integer literal |
+| `Enum value out of range` | an enum value outside 0..255, or autonumber past 255 |
+| `Duplicate enum X` | two visible named enums share a name |
+| `Enum name X is reserved` | the name is a built-in type or `CPU` |
+| `Unknown enum entry X in Y` | `Y.X` names no entry of enum `Y` |
+| `Enum Y is a type, not a value` | an enum name used where a value is expected |
+| `Cannot assign to enum entry Y.X` | assignment to an enum entry |
 
 ## Semantics notes — where v1 differs from the old Wolin
 

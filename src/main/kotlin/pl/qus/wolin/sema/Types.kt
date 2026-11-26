@@ -18,7 +18,7 @@ data class WolinType(
     val params: List<WolinType> = emptyList(),
     val retType: WolinType? = null,
     /** The struct this type names, for [TypeKind.STRUCT]. */
-    val structName: String? = null,
+    var structName: String? = null,
     /** The trait this type names, for [TypeKind.TRAIT]. */
     var traitName: String? = null,
 ) {

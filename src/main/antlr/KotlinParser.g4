@@ -52,6 +52,7 @@ importAlias
 
 topLevelObject
     : classDeclaration
+    | enumDeclaration
     | structDeclaration
     | traitDeclaration
     | implDeclaration
@@ -67,6 +68,18 @@ classDeclaration
     (NL* COLON NL* delegationSpecifiers)?
     (NL* typeConstraints)?
     (NL* classBody | NL* enumClassBody)?
+    ;
+
+enumDeclaration
+    : ENUM NL* simpleIdentifier? NL* enumValueBody
+    ;
+
+enumValueBody
+    : LCURL NL* (enumValueEntry (NL* COMMA NL* enumValueEntry)* NL* COMMA?)? NL* RCURL
+    ;
+
+enumValueEntry
+    : simpleIdentifier (NL* ASSIGNMENT NL* expression)?
     ;
 
 structDeclaration

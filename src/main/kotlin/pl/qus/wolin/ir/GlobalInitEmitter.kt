@@ -35,6 +35,7 @@ class GlobalInitEmitter(private val b: IrBuilder) {
         val fnName = "__wolin_init_file_$mangledName"
         b.startFunction(fnName, IrType.Void, emptyList())
         for (g in program.globals) {
+            if (g.enumValue != null) continue
             if (g.type.kind == TypeKind.TRAIT) {
                 if (g.init != null) storeTrait(g, program, mangledName)
                 continue
@@ -54,7 +55,7 @@ class GlobalInitEmitter(private val b: IrBuilder) {
                 }
                 continue
             }
-            if (!referencesAnotherEntity(init)) continue
+            if (!referencesAnotherEntity(init, program.resolved)) continue
             store(g, mangledName)
         }
         b.ret(null)
@@ -171,10 +172,13 @@ class GlobalInitEmitter(private val b: IrBuilder) {
  * (which decides which stores to run) ask the same question of the same
  * expression.
  */
-internal fun referencesAnotherEntity(e: Expr): Boolean = when (e) {
-    is VarRef -> true
-    is UnaryOp -> referencesAnotherEntity(e.operand)
-    is BinaryOp -> referencesAnotherEntity(e.left) || referencesAnotherEntity(e.right)
-    is Convert -> referencesAnotherEntity(e.value)
+internal fun referencesAnotherEntity(
+    e: Expr,
+    resolved: Map<VarRef, Symbol>,
+): Boolean = when (e) {
+    is VarRef -> (resolved[e] as? Symbol.DataSymbol)?.enumValue == null
+    is UnaryOp -> referencesAnotherEntity(e.operand, resolved)
+    is BinaryOp -> referencesAnotherEntity(e.left, resolved) || referencesAnotherEntity(e.right, resolved)
+    is Convert -> referencesAnotherEntity(e.value, resolved)
     else -> false
 }

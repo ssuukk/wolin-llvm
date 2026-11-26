@@ -19,6 +19,8 @@ sealed interface Ast {
         val globals: List<GlobalDecl>,
         val functions: List<FunDecl>,
         val structs: List<StructDecl> = emptyList(),
+        /** Named enum declarations; anonymous entries live in [globals]. */
+        val enums: List<EnumDecl> = emptyList(),
         val traits: List<TraitDecl> = emptyList(),
         val impls: List<ImplDecl> = emptyList(),
         val imports: List<ImportDecl>,
@@ -58,6 +60,8 @@ sealed interface Ast {
         val globals: List<GlobalDecl>,
         val functions: List<FunDecl>,
         val structs: List<StructDecl> = emptyList(),
+        /** Named enum declarations; anonymous entries live in [globals]. */
+        val enums: List<EnumDecl> = emptyList(),
         val traits: List<TraitDecl> = emptyList(),
         val impls: List<ImplDecl> = emptyList(),
         val imports: List<ImportDecl>,
@@ -69,6 +73,27 @@ sealed interface Ast {
          * global is emitted under.
          */
         val visibleGlobals: List<ForeignGlobal> = emptyList(),
+    ) : Ast
+
+    /**
+     * A simple enum declaration. A null [name] is anonymous: its entries are
+     * file-scope ubyte constants. A named enum is a type name plus entries
+     * accessed as `Name.ENTRY`; the name is a `ubyte` alias.
+     *
+     * The builder computes every entry's value, so the checker never sees a
+     * non-literal enum expression.
+     */
+    data class EnumDecl(
+        val name: String?,
+        val entries: List<EnumEntry>,
+        val line: Int? = null,
+    ) : Ast
+
+    /** One simple-enum entry: a name and its compile-time ubyte value. */
+    data class EnumEntry(
+        val name: String,
+        val value: Int,
+        val line: Int? = null,
     ) : Ast
 
     /**
@@ -143,6 +168,11 @@ sealed interface Ast {
         var constValue: ConstValue? = null,
         /** The source line of the declaration, for error messages. */
         val line: Int? = null,
+        /**
+         * The value of an anonymous simple-enum entry: inlined as an i8
+         * constant and never stored. Null for ordinary globals.
+         */
+        val enumValue: Int? = null,
     ) : Ast
 
     data class FunDecl(
@@ -212,6 +242,8 @@ sealed interface Ast {
         override var type: WolinType,
         /** The struct the field belongs to, filled by the checker. */
         var owner: StructDecl? = null,
+        /** The value of a named enum entry access, filled by the checker. */
+        var enumValue: Int? = null,
     ) : Expr
     data class Assign(val target: Expr, val value: Expr, override var type: WolinType, val op: String = "=") : Expr
     data class FunctionLit(
@@ -319,6 +351,8 @@ sealed interface Ast {
 }
 
 typealias Program = Ast.Program
+typealias EnumDecl = Ast.EnumDecl
+typealias EnumEntry = Ast.EnumEntry
 typealias StructDecl = Ast.StructDecl
 typealias TraitDecl = Ast.TraitDecl
 typealias ImplDecl = Ast.ImplDecl
