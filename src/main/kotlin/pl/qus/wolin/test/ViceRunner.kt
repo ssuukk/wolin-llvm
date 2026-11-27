@@ -16,6 +16,34 @@ import java.util.concurrent.TimeUnit
 class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
 
     /**
+     * A running emulator, and the cleanup that removes it.
+     *
+     * The emulator is a `xvfb-run` wrapper with the emulator and the X
+     * server under it. Removing it means removing the whole tree: the
+     * wrapper alone leaves the other two running.
+     */
+    class Emulator(val process: Process, val port: Int, val group: Long) {
+        /** Whether the emulator is still running. */
+        val isAlive: Boolean get() = process.isAlive
+
+        /**
+         * Removes the emulator when the JVM exits normally.
+         *
+         * This is the polite path: the emulator goes away as soon as the
+         * test is done. It is not the only one — a JVM killed outright
+         * runs no hooks, and the [ViceRunner] watchdog covers that case.
+         */
+        fun killOnExit() {
+            Runtime.getRuntime().addShutdownHook(Thread { cleanupNow() })
+        }
+
+        /** Removes the emulator and everything under it. Safe to call twice. */
+        fun cleanupNow() {
+            killTree(process, group)
+        }
+    }
+
+    /**
      * Runs [prg] under VICE and returns the bytes of memory [readStart]..[readEnd]
      * (inclusive). Byte `i` of the result is memory `readStart + i`.
      */
@@ -25,6 +53,29 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
         readEnd: Int,
         settleMillis: Long = RUN_SETTLE_MILLIS,
     ): ByteArray {
+        val emulator = start(prg)
+        try {
+            awaitMonitor(emulator.process, emulator.port)
+            Thread.sleep(settleMillis)
+            val monitor = ViceMonitor(HOST, emulator.port)
+            val body = try {
+                monitor.memGet(readStart, readEnd)
+            } finally {
+                monitor.close()
+            }
+            return readData(body, readStart, readEnd)
+        } finally {
+            emulator.cleanupNow()
+        }
+    }
+
+    /**
+     * Starts the emulator for [prg] and returns it.
+     *
+     * The emulator is registered for cleanup on JVM exit, so an
+     * interrupted test run leaves nothing behind.
+     */
+    fun start(prg: Path): Emulator {
         // Each emulator gets its own monitor port: a fixed port makes two
         // concurrent runs fight over the listener, and the loser then reads
         // the *other* program's memory.
@@ -32,7 +83,14 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
         // Run headless: x64sc is a GTK front end, so it opens a window on the
         // tester's desktop unless it is given a virtual X server. `xvfb-run`
         // starts one for this emulator and tears it down afterwards.
+        //
+        // `setsid` puts the wrapper in a process group of its own, so the
+        // whole tree — the wrapper, the X server and the emulator — shares
+        // one group id and one signal removes all of it. Without it the
+        // tree shares the JVM's group, and a group kill would take the JVM
+        // with it.
         val command = ProcessBuilder(
+            "setsid",
             "xvfb-run",
             "-a",
             "-s", "-screen 0 640x480x24",
@@ -47,19 +105,36 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
         val process = command.redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
-        try {
-            awaitMonitor(process, port)
-            Thread.sleep(settleMillis)
-            val monitor = ViceMonitor(HOST, port)
-            val body = try {
-                monitor.memGet(readStart, readEnd)
-            } finally {
-                monitor.close()
-            }
-            return readData(body, readStart, readEnd)
-        } finally {
-            terminate(process)
-        }
+        // The wrapper is the group leader, so its pid is the group id.
+        val group = process.pid()
+        startWatchdog(group)
+        val emulator = Emulator(process, port, group)
+        emulator.killOnExit()
+        return emulator
+    }
+
+    /**
+     * Starts the watchdog that removes the emulator's process group when
+     * this JVM is gone.
+     *
+     * A shutdown hook is not enough: `SIGKILL` — which is how a cancelled
+     * Gradle build ends the test JVM — runs no hooks at all, and the
+     * emulator would be reparented to init and spin at full CPU for the
+     * rest of the machine's uptime. The watchdog is a separate process, so
+     * it outlives the JVM and does the cleanup the hook would have done.
+     *
+     * The watchdog waits for either the JVM or the emulator to go: it
+     * must not outlive the emulator it watches, or a suite that runs many
+     * emulators would pile up watchers.
+     */
+    private fun startWatchdog(group: Long) {
+        val jvm = ProcessHandle.current().pid()
+        val script = "while kill -0 $jvm 2>/dev/null && kill -0 $group 2>/dev/null; do " +
+            "sleep 1; done; kill -9 -$group 2>/dev/null"
+        ProcessBuilder("sh", "-c", script)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
     }
 
     /**
@@ -108,24 +183,42 @@ class ViceRunner(val vicePath: String = "/home/qus/.local/bin/x64sc") {
         return data
     }
 
-    /** Stops the emulator: no orphan emulators, whatever happened. */
-    private fun terminate(process: Process) {
-        // `xvfb-run` is the direct child; the emulator is its descendant.
-        // Destroy the descendant first, so no window outlives the wrapper.
-        process.descendants().forEach { it.destroy() }
-        process.destroy()
-        if (!process.waitFor(TERMINATE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-            process.descendants().forEach { it.destroyForcibly() }
-            process.destroyForcibly()
-            process.waitFor(TERMINATE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
-        }
-    }
-
     private companion object {
         const val HOST = "127.0.0.1"
         const val MONITOR_TIMEOUT_MILLIS = 40_000L
         const val RUN_SETTLE_MILLIS = 4_000L
         const val POLL_INTERVAL_MILLIS = 250L
         const val TERMINATE_TIMEOUT_MILLIS = 5_000L
+
+        /**
+         * Removes [process] and everything under it.
+         *
+         * The whole tree shares one process group, so a signal to the
+         * group removes the wrapper, the X server and the emulator at
+         * once. The descendants are asked to stop first, so no window
+         * outlives the wrapper.
+         */
+        fun killTree(process: Process, group: Long) {
+            process.descendants().forEach { it.destroy() }
+            process.destroy()
+            if (!process.waitFor(TERMINATE_TIMEOUT_MILLIS, TimeUnit.SECONDS)) {
+                process.descendants().forEach { it.destroyForcibly() }
+                process.destroyForcibly()
+                process.waitFor(TERMINATE_TIMEOUT_MILLIS, TimeUnit.SECONDS)
+            }
+            // The group outlives the wrapper: a descendant that was
+            // reparented to init is still in it, and only the group
+            // signal reaches it.
+            killGroup(group)
+        }
+
+        /** Removes every process in [group]. */
+        fun killGroup(group: Long) {
+            val killed = ProcessBuilder("kill", "-9", "-$group")
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+            killed.waitFor(TERMINATE_TIMEOUT_MILLIS, TimeUnit.SECONDS)
+        }
     }
 }
