@@ -13,6 +13,10 @@ catalogue in `UnsupportedTest`, and a code audit of 2026-11-15.
       either autonumber or with values like: `enum { PENDING = 0, RUNNING =5, ERROR = 255}`
       — [design](docs/superpowers/specs/2026-11-25-simple-enum-design.md),
       [plan](docs/superpowers/plans/2026-11-25-simple-enum.md)
+- [x] `external fun` — a declaration of a function whose body lives outside
+      the program. The module emits `declare`, and `--rust-archive` /
+      `--rust-map` link a Rust archive in and tie the declared symbol to the
+      one the archive exports.
 - [ ] Struct field initialisers, struct/array fields, local arrays of
       structs without a fixed address, and nested member access.
 - [ ] Trait returns, trait struct fields, downcasting, generic trait bounds

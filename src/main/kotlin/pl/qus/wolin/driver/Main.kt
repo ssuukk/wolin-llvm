@@ -23,6 +23,8 @@ wolinc [options] <file.wtk>...
   -S, --sdk <dir>         llvm-mos SDK path (overrides discovery)
       --target <name>     c64 (default)
       --keep-ir           keep the .ll next to the .prg
+      --rust-archive <f>  link a Rust archive into the program (repeatable)
+      --rust-map <file>   symbol map: '<wolin symbol> = <rust symbol>' per line
 """
 
 private data class Options(
@@ -33,6 +35,10 @@ private data class Options(
     val sdk: String?,
     val target: String,
     val keepIr: Boolean,
+    /** Rust archives linked into the program. */
+    val rustArchives: List<Path> = emptyList(),
+    /** The symbol map tying Wolin external functions to Rust symbols. */
+    val rustMap: Path? = null,
 )
 
 /**
@@ -61,12 +67,14 @@ fun runCli(args: List<String>): Int {
 
 private fun parseArgs(args: List<String>): Options? {
     val inputs = mutableListOf<Path>()
+    val rustArchives = mutableListOf<Path>()
     var output: Path? = null
     var debug = false
     var emitIr = false
     var sdk: String? = null
     var target = "c64"
     var keepIr = false
+    var rustMap: Path? = null
     var i = 0
     while (i < args.size) {
         val arg = args[i]
@@ -77,6 +85,12 @@ private fun parseArgs(args: List<String>): Options? {
             "-S", "--sdk" -> { if (i + 1 >= args.size) return null; i++; sdk = args[i] }
             "--target" -> { if (i + 1 >= args.size) return null; i++; target = args[i] }
             "--keep-ir" -> keepIr = true
+            "--rust-archive" -> {
+                if (i + 1 >= args.size) return null
+                i++
+                rustArchives.add(Path.of(args[i]))
+            }
+            "--rust-map" -> { if (i + 1 >= args.size) return null; i++; rustMap = Path.of(args[i]) }
             else -> {
                 if (arg.startsWith("-")) return null
                 inputs.add(Path.of(arg))
@@ -84,7 +98,7 @@ private fun parseArgs(args: List<String>): Options? {
         }
         i++
     }
-    return Options(inputs, output, debug, emitIr, sdk, target, keepIr)
+    return Options(inputs, output, debug, emitIr, sdk, target, keepIr, rustArchives, rustMap)
 }
 
 private fun run(opts: Options): Int {
@@ -116,7 +130,7 @@ private fun run(opts: Options): Int {
         return 0
     }
     val workDir = Files.createTempDirectory("wolinc")
-    val llFiles = compileToPrgFile(opts.inputs, output, sdk, workDir)
+    val llFiles = compileToPrgFile(opts.inputs, output, sdk, workDir, opts.rustArchives, opts.rustMap)
     if (llFiles == null) {
         workDir.deleteRecursively()
         return 1
@@ -145,6 +159,8 @@ internal fun compileToPrgFile(
     output: Path,
     sdk: Sdk,
     workDir: Path,
+    rustArchives: List<Path> = emptyList(),
+    rustMap: Path? = null,
 ): List<Path>? {
     val compiled = compileFiles(inputs) ?: return null
     val llFiles = writeIrFiles(compiled, workDir)
@@ -160,8 +176,30 @@ internal fun compileToPrgFile(
         System.err.println("error: cannot run ${sdk.clang}: ${e.message}")
         return null
     }
+    // The map names the symbol each external function resolves to. A map
+    // entry for a symbol the program does not declare is a mistake worth
+    // reporting: the link would fail with a linker error instead.
+    val map = if (rustMap != null) {
+        try {
+            RustMap.parse(rustMap)
+        } catch (e: IllegalArgumentException) {
+            System.err.println("error: ${e.message}")
+            return null
+        }
+    } else {
+        RustMap(emptyList())
+    }
+    val declared = compiled.flatMap { it.externalSymbols }.toSet()
+    for ((wolin, _) in map.entries) {
+        if (wolin !in declared) {
+            System.err.println(
+                "error: the symbol map names $wolin, which is not an external function of this program"
+            )
+            return null
+        }
+    }
     try {
-        linker.link(llFiles, output, workDir)
+        linker.link(llFiles, output, workDir, rustArchives, map)
     } catch (e: IllegalStateException) {
         System.err.println(e.message)
         return null
@@ -231,6 +269,7 @@ private fun emitFiles(program: Ast.Program): List<CompiledFile>? {
             initFnName = moduleEmitter.initFnName,
             usedInterpHelpers = moduleEmitter.usedInterpHelpers,
             usesFloatInterp = moduleEmitter.usesFloatInterpolation,
+            externalSymbols = moduleEmitter.externalSymbols,
         )
     }
     return compiled

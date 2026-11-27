@@ -846,7 +846,7 @@ miscompile. This list is the diagnostic catalogue and the negative-test suite:
 | Labelled expressions | `loop@ while (...) { }` | rejected |
 | `when` range/type tests | `when { x in 1..10 -> }`, `when { x is Foo -> }` | rejected (the old Wolin: "nie wiem, jak się robi range test we when") |
 | `cc65 fun` | `cc65 fun f()` | rejected (§3) |
-| `external fun` | `external fun f()` | rejected — no assembly-object import in v1 (may be lowered to an `asm` declaration later) |
+| `external fun` | `external fun f()` | **supported** — a declaration of a function whose body lives outside the program; the module emits `declare` and the link resolves it. Linked in via `--rust-archive`, with `--rust-map` tying the declared symbol to the one the archive exports. |
 | `import` with `as` | `import a.b as c` | rejected — plain `import` is supported (§8.5) |
 
 Two rules make this tractable:

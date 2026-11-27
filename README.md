@@ -65,6 +65,8 @@ wolinc [options] <file.wtk>...
   -S, --sdk <dir>         llvm-mos SDK path (overrides discovery)
       --target <name>     c64 (default)
       --keep-ir           keep the .ll next to the .prg
+      --rust-archive <f>  link a Rust archive into the program (repeatable)
+      --rust-map <file>   symbol map: '<wolin symbol> = <rust symbol>' per line
 ```
 
 Every link writes `<output>.map` next to the `.prg`: symbol addresses, sizes,
@@ -73,6 +75,57 @@ and the section layout, as produced by the SDK linker.
 Several input files compile into one program: each file becomes its own LLVM
 module, and the driver module calls them. The files are checked together, so
 a name from another package resolves through an import.
+
+## Calling Rust from Wolin
+
+A Wolin program can call a function whose body is in a Rust archive. The
+Wolin side declares the function `external`; the Rust side exports it with
+`#[no_mangle]`. A symbol map ties the two names together, so the Rust
+library never has to learn Wolin's mangling.
+
+```kotlin
+// game.wtk
+external fun wol_add(a: uword, b: uword): uword
+
+fun main() {
+    var sum: uword = wol_add(20, 22)
+    var border: ubyte^0xd020 = sum.toUbyte()
+    while (true) {}
+}
+```
+
+```rust
+// lib.rs
+#![no_std]
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+
+#[no_mangle]
+pub extern "C" fn wol_add(a: u16, b: u16) -> u16 { a.wrapping_add(b) }
+```
+
+```bash
+cargo build --target mos-c64-none --release
+```
+
+```
+# map.txt — the Wolin symbol is <package>.<file>.<name>; here the file
+# is game.wtk with no package, so the symbol is game.wol_add.
+game.wol_add = wol_add
+```
+
+```bash
+java -cp "$(./gradlew -q printClasspath)" pl.qus.wolin.driver.MainKt \
+    --rust-archive target/mos-c64-none/release/libwollib.a \
+    --rust-map map.txt \
+    -o game.prg game.wtk
+```
+
+The calling convention matches the Rust side's for scalars and pointers. A
+struct is **not** passed by value — the two backends disagree on that — so
+pass a pointer or the fields. See
+[REFERENCE.md](REFERENCE.md#external-functions) for the details.
 
 ## The language, v1
 

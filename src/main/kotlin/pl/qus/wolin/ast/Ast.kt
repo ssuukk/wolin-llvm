@@ -192,6 +192,12 @@ sealed interface Ast {
         val retLocation: Location? = null,
         /** A trait method with no body. */
         val isAbstract: Boolean = false,
+        /**
+         * An `external fun`: a declaration of a function whose body lives
+         * outside the program — in a Rust archive linked into it, for
+         * instance. The module declares the symbol instead of defining it.
+         */
+        val isExternal: Boolean = false,
         /** The struct a method belongs to, filled by the checker. */
         val owner: String? = null,
         /** The trait an implementation method comes from, if any. */

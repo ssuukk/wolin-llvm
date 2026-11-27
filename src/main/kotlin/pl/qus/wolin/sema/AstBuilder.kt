@@ -180,12 +180,14 @@ class AstBuilder {
         val modifiers = ctx.modifierList()?.modifier().orEmpty()
         for (m in modifiers) {
             val fm = m.functionModifier()
-            if (fm == null || fm.INTERRUPT() == null) {
+            val allowed = fm != null && (fm.INTERRUPT() != null || fm.EXTERNAL() != null)
+            if (!allowed) {
                 val kw = m.children?.firstOrNull()?.text ?: "function modifier"
                 unsupported("function modifier '$kw'")
             }
         }
         val isInterrupt = modifiers.any { it.functionModifier()?.INTERRUPT() != null }
+        val isExternal = modifiers.any { it.functionModifier()?.EXTERNAL() != null }
         val fixedAddress = ctx.locationReference()?.let { locationAddress(it) }
         val params = ctx.functionValueParameters()?.functionValueParameter().orEmpty().map { buildParam(it) }
         val retInfo = ctx.type().lastOrNull { type ->
@@ -203,9 +205,19 @@ class AstBuilder {
             returnAtSink = previousSink
         }
 
+        // An external function's body lives elsewhere, so the declaration
+        // must not carry one.
+        if (isExternal && ctx.functionBody() != null) {
+            throw SemaException(
+                "An external function has no body: ${name}",
+                ctx.start.line,
+            )
+        }
+
         return FunDecl(
             name, params, retType, body, isInterrupt, fixedAddress, returnAt,
             retLocation = retInfo?.location,
+            isExternal = isExternal,
         )
     }
 

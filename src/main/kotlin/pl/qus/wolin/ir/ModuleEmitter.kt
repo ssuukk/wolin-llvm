@@ -55,8 +55,17 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
     var usedInterpHelpers: Set<String> = emptySet()
         private set
 
-    /** Whether this file formats a float in a template. */
+    /** Whether the file formats a float in a template. */
     var usesFloatInterpolation = false
+        private set
+
+    /**
+     * The symbols the file's external functions are declared under: the
+     * mangled names the module declares. A `--rust-map` entry names one of
+     * these, so a map entry for a symbol the program does not declare is
+     * a mistake the compiler can report.
+     */
+    var externalSymbols: Set<String> = emptySet()
         private set
 
     /** The program's struct declarations, for layouts and field offsets. */
@@ -79,6 +88,14 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
 
         for (fn in program.functions) {
             val params = fn.params.map { IrValue("%${it.name}", TypeMapper.ir(it.type)) }
+            if (fn.isExternal) {
+                // An external function's body lives outside the program, so
+                // the module declares the symbol instead of defining it.
+                // Whatever is linked in — a Rust archive, for instance —
+                // provides the definition.
+                emitExternalDeclaration(fn, params, mangledPrefix, constants)
+                continue
+            }
             val fixed = fn.fixedAddress
             if (fixed != null) {
                 // A fixed-address function is a DECLARATION: the address
@@ -135,6 +152,9 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
 
         usedInterpHelpers = stmt.expr.usedInterpHelpers.toSet()
         usesFloatInterpolation = stmt.expr.usesFloatInterpolation
+        externalSymbols = program.functions
+            .filter { it.isExternal }
+            .mapTo(mutableSetOf()) { "$mangledPrefix.${it.name}" }
 
         val sections = mutableListOf<String>()
         if (constants.isNotEmpty()) sections += constants.joinToString("\n")
@@ -384,6 +404,25 @@ class ModuleEmitter(private val b: IrBuilder = IrBuilder()) {
             else -> throw error("Unsupported location $location")
         }
         return "@\"$prefix.${g.name}\" = global $ptrTy inttoptr (i64 $address to $ptrTy)"
+    }
+
+    /**
+     * The declaration of an external function.
+     *
+     * The symbol is named `<prefix>.<name>`, the same name the file's own
+     * functions get, so a call site is an ordinary call. The definition
+     * comes from whatever is linked into the program; a `--rust-map` entry
+     * aliases it to the name the linked object actually defines.
+     */
+    private fun emitExternalDeclaration(
+        fn: pl.qus.wolin.ast.FunDecl,
+        params: List<IrValue>,
+        prefix: String,
+        constants: MutableList<String>,
+    ) {
+        val ret = TypeMapper.ir(fn.retType ?: Types.unit).llvmName()
+        val args = params.joinToString(", ") { "${it.type.llvmName()} ${it.name}" }
+        constants += "declare $ret @\"$prefix.${fn.name}\"($args)"
     }
 
     /**

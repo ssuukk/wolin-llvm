@@ -35,8 +35,8 @@ class UnsupportedTest {
         assertRejected("class C { }")
     }
 
-    @Test fun `external function modifier is rejected`() {
-        assertRejected("external fun f() { }")
+    @Test fun `external function modifier stays supported`() {
+        check("external fun f()")
     }
 
     @Test fun `cc65 function modifier is rejected`() {

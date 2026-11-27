@@ -37,11 +37,23 @@ class Linker(private val sdk: Sdk) {
      * Links the modules into the output `.prg`, writing the linker's map to
      * `<output>.map` beside it. The SDK's default configuration enables
      * `-flto`, which is what we want.
+     *
+     * [archives] are linked into the program as well — a Rust staticlib,
+     * for instance. [rustMap] aliases the symbols the external functions
+     * are declared under to the ones the archives define.
      */
-    fun link(llFiles: List<Path>, output: Path, workDir: Path) {
+    fun link(
+        llFiles: List<Path>,
+        output: Path,
+        workDir: Path,
+        archives: List<Path> = emptyList(),
+        rustMap: RustMap = RustMap(emptyList()),
+    ) {
         val map = output.resolveSibling(output.fileName.toString() + ".map")
         run(
             listOf("-O2") + llFiles.map { it.toString() } +
+                archives.map { it.toString() } +
+                rustMap.defsymArguments().map { "-Wl,$it" } +
                 listOf("-o", output.toString(), "-Wl,-Map=$map"),
             workDir,
         )

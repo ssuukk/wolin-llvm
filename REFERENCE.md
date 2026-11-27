@@ -53,6 +53,7 @@ assigned to a `word` variable or passed to a function expecting a `ubyte`
 without a conversion.
 
 ## Declarations
+```Kotlin
 var x: ubyte                  // local: a stack slot (or global: data section)
 var x: ubyte^0xd020           // fixed-address variable: direct load/store, no storage
 var x: bool^CPU.I             // CPU status flag: interrupt bit
@@ -675,6 +676,95 @@ fun main() {
     var r: ubyte = suma(2, 3)
 }
 ```
+
+## External functions
+
+An `external fun` declares a function whose body lives outside the program —
+in a Rust archive linked into it, for instance. The declaration has no body:
+
+```kotlin
+external fun wol_add(a: uword, b: uword): uword
+```
+
+The compiler emits a declaration of the symbol, not a definition, so the
+link resolves it against whatever is linked in. A declaration with a body is
+a compile error ("An external function has no body").
+
+The symbol the declaration is emitted under is the file's usual mangled
+name: `<package>.<file>.<name>`. For a file `t.wtk` with no package that is
+`t.wol_add`. The symbol map ties that name to the one the linked archive
+exports, so the Rust library needs no knowledge of Wolin's naming:
+
+```
+# map.txt
+t.wol_add = wol_add
+```
+
+```
+wolinc --rust-archive libwollib.a --rust-map map.txt -o game.prg game.wtk
+```
+
+Each map line is `<wolin symbol> = <rust symbol>`. Blank lines and lines
+starting with `#` are ignored. A map entry naming a symbol the program does
+not declare as an external function is a compile error.
+
+An external function cannot be an interrupt handler, and its arguments are
+type-checked like any other function's.
+
+### Calling convention
+
+The external function is called with the LLVM-MOS C64 convention: arguments
+and results are passed in registers, integers by width, and a pointer as a
+16-bit address. The scalar widths match the Rust side's — `ubyte` is `i8`,
+`uword` is `i16`, `bool` is `i1`, `float` is `float`.
+
+**A struct is not passed by value.** The two backends disagree on how a
+small struct is passed, so a struct crosses the boundary as a pointer, or as
+its fields. Struct *layout* agrees: `#[repr(C)]` in Rust and a `struct` in
+Wolin have the same size and alignment.
+
+### Passing a pointer
+
+Wolin has no pointer type. A pointer is an array at a fixed address, which
+is passed as an address:
+
+```kotlin
+external fun wol_store(p: ubyte[ubyte]^0x3000, v: ubyte): ubyte
+
+fun main() {
+    var buffer: ubyte[ubyte]^0x3000 = [0, 0, 0]
+    var stored: ubyte = wol_store(buffer, 99)
+}
+```
+
+A `ubyte^0x3000` is a *value* at an address, not the address: it loads the
+byte. `ubyte[ubyte]^0x3000` is the array at that address, and passing it
+passes the address.
+
+### The Rust side
+
+The library is a `no_std` staticlib built for the MOS C64 target:
+
+```rust
+#![no_std]
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+#[no_mangle]
+pub extern "C" fn wol_add(a: u16, b: u16) -> u16 {
+    a.wrapping_add(b)
+}
+```
+
+```bash
+cargo build --target mos-c64-none --release
+```
+
+The archive must not export a `main` symbol: the driver's `main` would
+collide with it.
 
 ## Packages, imports, multiple files
 

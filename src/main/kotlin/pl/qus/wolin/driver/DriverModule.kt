@@ -22,6 +22,8 @@ data class CompiledFile(
     val usedInterpHelpers: Set<String> = emptySet(),
     /** Whether the file formats a float in a template. */
     val usesFloatInterp: Boolean = false,
+    /** The symbols the file's external functions are declared under. */
+    val externalSymbols: Set<String> = emptySet(),
 )
 
 /**

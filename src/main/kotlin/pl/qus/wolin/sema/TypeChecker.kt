@@ -746,6 +746,11 @@ class TypeChecker {
                 throw SemaException("Return not allowed for interrupt function!")
             }
         }
+        if (fn.isExternal && fn.isInterrupt) {
+            throw SemaException(
+                "An external function cannot be an interrupt handler: ${fn.name}",
+            )
+        }
         fn.params.forEach { param ->
             resolveType(param.type)
             if (param.type.kind == TypeKind.STRUCT) {
