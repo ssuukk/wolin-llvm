@@ -31,7 +31,7 @@ var sprite6Y: ubyte^0xd00d
 var sprite7X: ubyte^0xd00e
 var sprite7Y: ubyte^0xd00f
 
-// Bit 8 (MSB) of each sprite's X coordinate; bit 7-n is sprite n.
+// Bit 8 (MSB) of each sprite's X coordinate; bit n is sprite n.
 var spriteXHigh: ubyte^0xd010
 
 // Control 1: bit 7 RST8 (bit 8 of the raster comparison line), 6 ECM, 5 BMM,
@@ -47,14 +47,14 @@ var rasterCounter: ubyte^0xd012
 var lightPenX: ubyte^0xd013
 var lightPenY: ubyte^0xd014
 
-// Sprites 0-7 enabled; bit 7-n is sprite n.
+// Sprites 0-7 enabled; bit n is sprite n.
 var spriteEnable: ubyte^0xd015
 
 // Control 2: bit 5 RES (no function on the 6567/6569), 4 MCM, 3 CSEL, 2-0
 // XSCROLL.
 var controlRegister2: ubyte^0xd016
 
-// Sprites 0-7 Y expansion (doubled height); bit 7-n is sprite n.
+// Sprites 0-7 Y expansion (doubled height); bit n is sprite n.
 var spriteYExpansion: ubyte^0xd017
 
 // Screen address pointer: screenAddressHigh holds bits 13-10 of the screen
@@ -62,23 +62,23 @@ var spriteYExpansion: ubyte^0xd017
 // screenAddressLow holds the low byte of the screen address.
 var screenAddressHigh: ubyte^0xd018
 
-// Interrupt status (IRQST): bit 7 IRQ (master; writing 0 clears the flag),
-// 4 ILP (light pen), 3 IMMC (sprite-sprite collision), 2 IMBC
-// (sprite-background collision), 1 IRST (raster line).
+// Interrupt status (IRQST): bit 7 IRQ (master; writing 1 clears the flag),
+// 3 ILP (light pen), 2 IMMC (sprite-sprite collision), 1 IMBC
+// (sprite-background collision), 0 IRST (raster line).
 var interruptStatus: ubyte^0xd019
 
-// Interrupt enable (IRQEN): bit 1 ERST (raster interrupt); the other bits
+// Interrupt enable (IRQEN): bit 0 ERST (raster interrupt); the other bits
 // gate the light pen, sprite-sprite and sprite-background sources. Write 1 to
 // enable a source, 0 to disable it.
 var interruptEnable: ubyte^0xd01a
 
-// Sprites 0-7 above the background (data priority); bit 7-n is sprite n.
+// Sprites 0-7 above the background (data priority); bit n is sprite n.
 var spriteDataPriority: ubyte^0xd01b
 
-// Sprites 0-7 multicolor; bit 7-n is sprite n.
+// Sprites 0-7 multicolor; bit n is sprite n.
 var spriteMulticolor: ubyte^0xd01c
 
-// Sprites 0-7 X expansion (doubled width); bit 7-n is sprite n.
+// Sprites 0-7 X expansion (doubled width); bit n is sprite n.
 var spriteXExpansion: ubyte^0xd01d
 
 // Sprites 0-7 collided with another sprite; read-only, cleared on read.
@@ -145,53 +145,52 @@ enum Color {
     LIGHT_GRAY = 15
 }
 
-// A sprite mask: bit 7-n selects sprite n. The same mask goes into
-// spriteEnable, spriteDataPriority, spriteMulticolor, spriteXExpansion
-// and spriteYExpansion; spriteXHigh uses bit n instead of bit 7-n.
+// A sprite mask: bit n selects sprite n. The same mask goes into
+// spriteEnable, spriteDataPriority, spriteMulticolor, spriteXExpansion,
+// spriteYExpansion and spriteXHigh.
 //
 // A mask is built by ORing the bits of the sprites in it, so the values are
 // single-bit masks to be combined, not numbers to store.
 enum SpriteMask {
-    SPRITE0 = 0x80,
-    SPRITE1 = 0x40,
-    SPRITE2 = 0x20,
-    SPRITE3 = 0x10,
-    SPRITE4 = 0x08,
-    SPRITE5 = 0x04,
-    SPRITE6 = 0x02,
-    SPRITE7 = 0x01
+    SPRITE0 = 0x01,
+    SPRITE1 = 0x02,
+    SPRITE2 = 0x04,
+    SPRITE3 = 0x08,
+    SPRITE4 = 0x10,
+    SPRITE5 = 0x20,
+    SPRITE6 = 0x40,
+    SPRITE7 = 0x80
 }
 
-// The interrupt sources of interruptEnable (IRQEN): bit 1 ERST (raster),
-// bit 2 EMBC (sprite-background), bit 3 EMMC (sprite-sprite). Write the bit
+// The interrupt sources of interruptEnable (IRQEN): bit 0 ERST (raster),
+// bit 1 EMBC (sprite-background), bit 2 EMMC (sprite-sprite). Write the bit
 // to enable a source, 0 to disable it.
 //
-// The register has only those three bits on the 6567/6569: the light pen
-// interrupt (bit 4, ELP) was dropped with the light pen, and the other
-// bits are not implemented and read back as 1. A read therefore has to be
-// masked with 0x0e.
+// The register has only those three bits plus the light pen (bit 3, ELP) on
+// the 6567/6569; the other bits are not implemented and read back as 1. A
+// read therefore has to be masked with 0x0f.
 enum InterruptSource {
-    SPRITE_COLLISION = 0x08,
-    SPRITE_BACKGROUND = 0x04,
-    RASTER = 0x02
+    SPRITE_COLLISION = 0x04,
+    SPRITE_BACKGROUND = 0x02,
+    RASTER = 0x01
 }
 
-// The interrupt flags of interruptStatus (IRQST): bit 1 IRST (raster),
-// bit 2 IMBC (sprite-background), bit 3 IMMC (sprite-sprite), bit 7 IRQ
-// (the master flag; writing 0 clears it).
+// The interrupt flags of interruptStatus (IRQST): bit 0 IRST (raster),
+// bit 1 IMBC (sprite-background), bit 2 IMMC (sprite-sprite), bit 7 IRQ
+// (the master flag; writing 1 clears it).
 //
 // The flag bits and the enable bits are the same positions: a raster
-// interrupt is bit 1 in both registers, and the collision sources are bits
-// 2 and 3 in both. Only IRQ (bit 7, the master flag) is unique to the
+// interrupt is bit 0 in both registers, and the collision sources are bits
+// 1 and 2 in both. Only IRQ (bit 7, the master flag) is unique to the
 // status register.
 //
-// The light pen flag (bit 4, ILP) was dropped with the light pen; like the
-// unimplemented enable bits, it reads back as 1.
+// The light pen flag (bit 3, ILP) sits below the collision flags; like the
+// unimplemented enable bits, the bits above it read back as 1.
 enum InterruptFlag {
     IRQ = 0x80,
-    SPRITE_COLLISION = 0x08,
-    SPRITE_BACKGROUND = 0x04,
-    RASTER = 0x02
+    SPRITE_COLLISION = 0x04,
+    SPRITE_BACKGROUND = 0x02,
+    RASTER = 0x01
 }
 
 // The bits of controlRegister1 ($d011): bit 7 RST8 (the high bit of the

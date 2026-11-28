@@ -12,7 +12,7 @@
 
 GRADLE := ./gradlew
 MAIN := pl.qus.wolin.driver.MainKt
-STDLIB := stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk
+STDLIB := stdlib/c64/kernal.wtk stdlib/c64/vic.wtk stdlib/wolin/screen.wtk stdlib/c64/cia.wtk
 COMPILER_SRC := $(wildcard build.gradle.kts settings.gradle.kts gradle.properties) \
                 $(shell find src/main -type f 2>/dev/null)
 SOURCES := $(wildcard examples/*.wtk)

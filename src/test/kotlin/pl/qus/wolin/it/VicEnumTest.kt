@@ -28,7 +28,9 @@ class VicEnumTest {
             import c64.vic.spriteEnable
             import c64.vic.interruptEnable
             import c64.vic.controlRegister1
+            var maskInterrupts: bool^CPU.I
             fun main() {
+                maskInterrupts = true // keep the enabled raster IRQ from interrupting the writes
                 borderColor = Color.ORANGE
                 backgroundColor0 = Color.BLUE
                 spriteEnable = SpriteMask.SPRITE0 | SpriteMask.SPRITE3
@@ -57,8 +59,8 @@ class VicEnumTest {
             val regs = ViceRunner().run(output, 0xd011, 0xd024)
             val at = { address: Int -> (regs[address - 0xd011].toInt() and 0xFF) }
             assertEquals(0x10, at(0xd011) and 0x7f, "controlRegister1 (Control1.DEN)")
-            assertEquals(0x90, at(0xd015), "spriteEnable (SPRITE0|SPRITE3)")
-            assertEquals(0x02, at(0xd01a) and 0x0e, "interruptEnable (InterruptSource.RASTER)")
+            assertEquals(0x09, at(0xd015), "spriteEnable (SPRITE0|SPRITE3)")
+            assertEquals(0x01, at(0xd01a) and 0x0f, "interruptEnable (InterruptSource.RASTER)")
             assertEquals(0x08, at(0xd020) and 0x0f, "borderColor (Color.ORANGE)")
             assertEquals(0x06, at(0xd021) and 0x0f, "backgroundColor0 (Color.BLUE)")
         } finally {
